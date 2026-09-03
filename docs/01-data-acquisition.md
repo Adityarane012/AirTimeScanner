@@ -93,7 +93,11 @@ Where, and only where, robots.txt permits the path:
 - Per-source robots.txt re-checked on every run, not cached indefinitely
 - Raw payloads retained content-hashed as immutable evidence
 
-This is where Playwright lives, for genuinely JavaScript-rendered pages.
+This is where a real browser session lives, for genuinely JavaScript-rendered
+pages — see [`03-architecture.md`](03-architecture.md#acquisition-scrapling-across-the-tier-ladder)
+for the tool decision and the fetcher-per-tier mapping. Escalate to it only after
+a lighter-weight impersonated HTTP request has actually been tried and blocked,
+per source.
 
 ## What we do *not* build
 

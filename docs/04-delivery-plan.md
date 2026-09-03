@@ -79,7 +79,7 @@ Ordered by expected impact.
 | 4 | Offer-vs-transaction gap misread as inaccuracy | Certain | Medium | Compare changes only; state the price concept in metadata, API and dashboard |
 | 5 | Day-of-week artefact mistaken for signal | Certain if unhandled | Medium | 7-day MA headline; DOW-adjusted variant; complete-week aggregation |
 | 6 | ToS/legal challenge from a source | Medium | High | Tier 0/1 emphasis; documented compliance posture; identified UA; immediate stop on request |
-| 7 | Parser rot from site redesigns | High | Medium | Fixture-based contract tests; parse-error-rate alerting; adapter isolation caps the blast radius |
+| 7 | Parser rot from site redesigns | High | Medium | Scrapling adaptive selectors auto-relocate, quarantined behind human confirmation before entering the index ([`03-architecture.md`](03-architecture.md#acquisition-scrapling-across-the-tier-ladder)); fixture-based regression tests; adapter isolation caps the blast radius |
 | 8 | Regulatory fare intervention (fare bands/caps) during the window | Medium | Medium | Flag as a structural break in the series; do not smooth it away |
 | 9 | Festival and event contamination | High | Low | Event calendar as metadata; do not exclude — it is real consumer inflation |
 | 10 | No Tier 2 budget → thinner coverage | Medium | Medium | Resolve in Phase 0 ([Q6](05-open-questions.md#q6)); scope coverage claims to the answer |
