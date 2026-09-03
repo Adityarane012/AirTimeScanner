@@ -59,7 +59,7 @@ Four components, in dependency order:
 - Directional city-pair basket (~50 pairs, both directions treated separately),
   selected from DGCA passenger-traffic data, stratified metro–metro /
   metro–non-metro / RCS-UDAN
-- Advance-purchase windows T+1, T+7, T+15, T+30, T+45 from each collection date
+- Advance-purchase windows T+1, T+7, T+15, T+30 from each collection date
 - Carriers: IndiGo, Air India, Air India Express, Akasa Air, SpiceJet
 - One adult, one-way, economy, non-stop, lowest available fare as the headline
   quote; full fare ladder retained for research

@@ -85,14 +85,14 @@ Two consequences, both important:
 *This is the largest unresolved methodological issue in the project, and the
 problem statement does not mention it.*
 
-The mandated design collects five advance-purchase windows (T+1, T+7, T+15, T+30,
-T+45). To combine them into one index, each window needs a weight: **the share of
+The mandated design collects four advance-purchase windows (T+1, T+7, T+15, T+30).
+To combine them into one index, each window needs a weight: **the share of
 Indian domestic bookings actually made at that lead time.**
 
 That distribution — the booking curve — is not publicly available.
 
-The failure mode if it is ignored is not subtle. Equal-weighting the five windows
-implicitly asserts that as many passengers book one day out as book forty-five days
+The failure mode if it is ignored is not subtle. Equal-weighting the four windows
+implicitly asserts that as many passengers book one day out as book thirty days
 out. Last-minute fares run several times advance fares, so equal weights would:
 
 - **overstate the index level** substantially,
@@ -128,7 +128,6 @@ offset** from the collection date, because the offsets are congruent modulo 7:
 | T+7 | 0 | **same weekday, always** |
 | T+15 | 1 | next day |
 | T+30 | 2 | two days later |
-| T+45 | 3 | three days later |
 
 So T+7 collected on a Monday *always* prices a Monday departure. Airfares have a
 strong, systematic day-of-week pattern. Therefore **the raw daily index carries a

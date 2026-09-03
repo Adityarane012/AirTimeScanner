@@ -10,7 +10,7 @@ built, and should be settled in Phase 0.
 ## Q1 — Who supplies the booking-curve weights? ⚠️ *Blocking for the composite index*
 
 The share of Indian domestic bookings made at each advance-purchase window
-(T+1/7/15/30/45) is not public, and the composite index cannot be correctly
+(T+1/7/15/30) is not public, and the composite index cannot be correctly
 weighted without it. See [`02-methodology.md`](02-methodology.md#4-the-booking-curve-gap)
 for why equal weighting fails badly rather than approximately.
 
