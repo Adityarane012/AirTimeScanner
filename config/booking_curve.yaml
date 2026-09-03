@@ -1,0 +1,23 @@
+# Assumed booking-curve weights — docs/02-methodology.md §4 / docs/05-open-questions.md Q1.
+#
+# The real distribution (share of Indian domestic bookings made at each
+# advance-purchase window) is not publicly available. This is Q1's
+# recommended-default fallback: a versioned assumed curve, used ONLY together
+# with the mandatory sensitivity band in the index engine (never publish the
+# composite as a bare point estimate — see IMPLEMENTATION.md open questions).
+#
+# Directional, not evidence-based: last-minute (T+1) fares run several times
+# advance fares, so T+1 gets a deliberately small weight. Replace with a real
+# distribution the moment one is obtainable (DGCA/OTA engagement).
+
+version: v0_assumed_2026
+weights:
+  T1: 0.08
+  T7: 0.27
+  T15: 0.35
+  T30: 0.30
+
+sensitivity_alternates:
+  # used to compute sensitivity_low / sensitivity_high on every composite value
+  front_loaded:   { T1: 0.15, T7: 0.35, T15: 0.30, T30: 0.20 }
+  back_loaded:    { T1: 0.04, T7: 0.18, T15: 0.33, T30: 0.45 }

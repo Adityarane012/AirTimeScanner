@@ -1,0 +1,6 @@
+# Coverage floors — docs/01-data-acquisition.md "Coverage floor".
+# Set in advance, per official-statistics practice: a value computed from a
+# collapsed sample is suppressed, not published as if it were normal.
+
+stratum_suppression_floor: 0.60   # below this fill rate, suppress the stratum
+headline_suppression_floor: 0.75  # below this overall fill rate, suppress the headline

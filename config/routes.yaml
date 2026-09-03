@@ -1,0 +1,22 @@
+# PLACEHOLDER route basket — 10 major metro-metro pairs (both directions) to
+# unblock Day 1 development. This is NOT the real ~50-pair DGCA-traffic-
+# weighted basket required by docs/00-scope.md — that needs actual DGCA
+# passenger-traffic data (see IMPLEMENTATION.md "Resources needed from you",
+# item 2) to select pairs and set dgca_pax_weight. Swap this file once that
+# data is in hand; nothing else in the codebase needs to change (config-driven
+# by design — see docs/03-architecture.md core data model).
+
+routes:
+  - { origin: DEL, destination: BOM, stratum_class: metro_metro }
+  - { origin: BOM, destination: DEL, stratum_class: metro_metro }
+  - { origin: DEL, destination: BLR, stratum_class: metro_metro }
+  - { origin: BLR, destination: DEL, stratum_class: metro_metro }
+  - { origin: DEL, destination: CCU, stratum_class: metro_metro }
+  - { origin: CCU, destination: DEL, stratum_class: metro_metro }
+  - { origin: BOM, destination: BLR, stratum_class: metro_metro }
+  - { origin: BLR, destination: BOM, stratum_class: metro_metro }
+  - { origin: DEL, destination: HYD, stratum_class: metro_metro }
+  - { origin: HYD, destination: DEL, stratum_class: metro_metro }
+
+advance_purchase_windows_days: [1, 7, 15, 30]
+carriers: [6E, AI, IX, QP, SG]   # IndiGo, Air India, Air India Express, Akasa, SpiceJet
