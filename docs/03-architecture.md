@@ -91,6 +91,30 @@ This keeps the actual benefit — finding out within hours that a source changed
 instead of discovering it a week later from a coverage hole — without letting the
 feature quietly redefine what is being measured.
 
+### Known limitation: Scrapling's bundled stealth browser
+
+A 2026 third-party benchmark (7 stealth tools against 31 Cloudflare-protected
+targets) puts Scrapling's own `StealthyFetcher` at roughly 58% success, well
+behind Camoufox (~89%) and nodriver in the same series. Treat the exact figures
+as directional — the primary source wasn't independently re-verifiable, and the
+benchmark is specific to Cloudflare Turnstile/interstitial challenges, not to
+whatever bot management IndiGo, Air India or MakeMyTrip actually run.
+
+Consequence for this project: **Scrapling remains the right framework — its
+fetcher tiers, adaptive selectors and config surface are unaffected — but its
+built-in `StealthyFetcher` should not be assumed sufficient for the hardest
+Tier 3 targets without testing.** For a source that survives TLS impersonation
+but still blocks `StealthyFetcher`, the fallback is to point Scrapling's
+`DynamicFetcher` at an externally-launched Camoufox instance over CDP rather than
+relying on Scrapling's bundled stealth backend — unconfirmed in practice, to be
+validated in Phase 0 reconnaissance, not assumed. If that also fails, take that
+carrier through Tier 1 (its published tariff sheet) or Tier 2 (Google Flights)
+instead of continuing to fight its own site. No benchmark substitutes for
+actually probing each real target; see the source-by-source table in
+[`01-data-acquisition.md`](01-data-acquisition.md#source-by-source-assessment),
+which already flags anti-bot posture there as an estimate to be confirmed, not
+a final answer.
+
 ### Why SDMX matters
 
 **SDMX (Statistical Data and Metadata eXchange) is the standard by which national
