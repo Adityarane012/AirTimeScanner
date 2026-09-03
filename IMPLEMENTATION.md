@@ -107,15 +107,17 @@ rediscovered mid-Phase-1:
 
 ```
 pyproject.toml            deps: fastapi, sqlalchemy, psycopg, pydantic, pandera, pandas,
-                           pyarrow, pyyaml, apscheduler, scrapling[fetchers], pytest, streamlit
+                           pyarrow, pyyaml, apscheduler, scrapling[fetchers], pdfplumber (all MIT/BSD/Apache — checked, see Phase 1 note), pytest, streamlit
 env.example                copy to .env — points at Supabase by default now
-.gitignore
+.gitignore                 now also excludes .scratch/ and logs/
 scripts/
   bootstrap_db.sql          NOT in use — local-Postgres fallback path only, see its header
   sql/0001_init.sql         full schema: route, collection_run, selector_confirmation,
                              fare_quote, stratum_panel, index_value — matches docs/03 1:1
   seed_routes.py            loads config/routes.yaml into the route table
-  run_collection.py         the daily entrypoint (empty adapter registry — Phase 1 fills it)
+  run_collection.py         the daily entrypoint — REAL now: registers Tier1IndiGoTariffAdapter,
+                             persists parsed quotes to fare_quote (inline minimal NORMALISE)
+  run_collection.bat        Task Scheduler wrapper (sets working dir, logs to logs/)
 config/
   routes.yaml               PLACEHOLDER 10-route basket (§3.2 replaces this)
   booking_curve.yaml         Q1's assumed-curve default, versioned, with sensitivity alternates
@@ -125,8 +127,11 @@ src/apix/
   storage/object_store.py     content-hashed immutable local store (MinIO stand-in)
   contracts/fare_quote.py     pydantic + Pandera FareQuote contract
   acquisition/base.py         SourceAdapter interface + CollectionResult (isolation boundary)
-  acquisition/tier1_tariff_stub.py   worked adapter TEMPLATE, using the real (verified)
-                             scrapling 0.4.15 API — needs a real target URL (Phase 0/1)
+  acquisition/tier1_tariff_stub.py   generic adapter TEMPLATE for the next carrier (Phase 2)
+  acquisition/pdf_tariff.py   REAL, working: parses IndiGo's tariff-band PDF structure —
+                             section-tracking, MINUS-SIGN route separator, NA handling
+  acquisition/tier1_indigo.py   REAL, first working adapter — see §5a for the honest scope
+                             of what its output means
   db/models.py                 SQLAlchemy models mirroring 0001_init.sql
   db/engine.py
   index/jevons.py              elementary aggregation, pure function
@@ -134,6 +139,8 @@ src/apix/
                              /v1/routes, /v1/quotes, /v1/coverage, /v1/methodology, /v1/sdmx/*
 tests/
   test_jevons.py               9 golden-fixture tests (ILO-style worked examples), passing without a DB
+  test_pdf_tariff.py           6 more, fixture-based (not live-PDF), covering the section-
+                             tracking guard and NA-bucket handling
 ```
 
 Run the test suite any time with no DB needed:
@@ -159,9 +166,9 @@ docs/04 but sized for one person. Numbers assume you start today.
 
 | Phase | Days | Goal | Definition of done |
 |---|---|---|---|
-| **0 — Setup & recon** | 0.5–1 | ✅ **Done**, including recon: `docs/06-recon-log.md` has real tariff-sheet URLs for IndiGo, Air India, Air India Express, Akasa Air (SpiceJet's not yet located), plus live-confirmed robots.txt verdicts. One real conflict found (Air India Express blocks its own tariff-PDF path via robots.txt) and two ambiguous cases (IndiGo/Air India's main-site robots.txt couldn't be fetched by the recon tool at all — same "Enterprise bot management" signature docs/01 predicted; needs a Phase-1 live check via Scrapling, a different client) | See `docs/06-recon-log.md` |
-| **1 — Vertical slice** | 1–2 | **Start with IndiGo** (best-signal candidate — see the stub adapter's TODO and the recon log). Live-verify its robots.txt via `Fetcher(impersonate="chrome")` first (recon couldn't confirm this directly), then fetch → parse → write to Postgres + object store. **This is the critical-path phase — get it running even if ugly.** | One real row in `fare_quote` with `observation_status='observed'` and a valid `raw_payload_hash`; `scripts/run_collection.py` runs clean; Task Scheduler entry created so it now runs unattended daily |
-| **2 — Multi-source** | 1–2 | Remaining Tier-1 adapters (all 5 carriers, or as many as have reachable tariff sheets); real ~50-route basket loaded from actual DGCA data; NORMALISE stage (fare decomposition, de-dup across sources) | ≥3 sources landing daily; `route` table has the real weighted basket; a NORMALISE unit test per fare-component rule |
+| **0 — Setup & recon** | 0.5–1 | ✅ **Done and signed off** — see `docs/06-recon-log.md`'s "Phase 0 sign-off" section: real tariff-sheet URLs for 4/5 carriers, IndiGo fully live-verified (robots.txt, T&C, actual fetch), one real conflict found and left unresolved rather than routed around (Air India Express), Q4/Q6/Q7 addressed (Q4 outreach drafted in `docs/07-dgca-outreach-draft.md`, not yet sent — that's yours to do) | See `docs/06-recon-log.md` |
+| **1 — Vertical slice** | 1–2 | ✅ **Done.** Real IndiGo adapter (`tier1_indigo.py` + `pdf_tariff.py`): fetches the live tariff PDF, parses its "ONE WAY ECONOMY FARES" section (confirmed via direct inspection: 68 pages, MINUS-SIGN route separator, multiple fare-table sections that must be kept separate, non-directional bands), writes real rows to Supabase. Task Scheduler entry (`APIx-DailyCollection`, daily 06:00, via `run_collection.bat`) registered and manually triggered once to confirm the actual scheduled path works, not just the direct invocation | **Verified**: 4 real rows in `fare_quote` (2 via direct run, 2 via the Task Scheduler path), `observation_status='observed'`, valid `raw_payload_hash`, `fare_class='tier1_tariff_floor'` correctly distinguishing this from a live headline quote (see the honesty note in `tier1_indigo.py`'s docstring — this is a filed floor band, not a per-date offer). 15/15 tests green (6 new, parser-only, fixture-based) |
+| **2 — Multi-source** | 1–2 | Remaining Tier-1 adapters (all 5 carriers, or as many as have reachable tariff sheets); real ~50-route basket loaded from actual DGCA data; NORMALISE stage (fare decomposition, de-dup across sources); **resolve the Tier-1-vs-Tier-3 semantics question flagged below before this phase's index-relevant work** | ≥3 sources landing daily; `route` table has the real weighted basket; a NORMALISE unit test per fare-component rule |
 | **3 — Cleaning & index engine** | 1–2 | Outlier flagging (MAD, within-stratum, log relatives), stratum-mean imputation, Jevons elementary (done) → Lowe/Young upper level with `booking_curve.yaml`, `config_hash` + vintage stamping, coverage-floor suppression | A `stratum_panel` and `index_value` row computed end-to-end from real collected data; recompute is bit-identical on a second run; sensitivity band present on every composite value |
 | **4 — API & dashboard** | 1 | Wire `/v1/index*` to real data (already stubbed); Streamlit dashboard: trend line, coverage panel, at minimum | `GET /v1/index?series=...` returns real numbers; Streamlit page loads and shows the trend and a coverage/suppression indicator |
 | **5 — Docs & validation setup** | 0.5–1 | Revision-policy doc; wire the DGCA comparison metric (direction-of-change) so it's ready the moment a DGCA monthly figure is out; open-questions decisions written down as committed, not just recommended | `docs/07-revision-policy.md` exists; validation script runs against whatever data exists, even if thin |
@@ -171,6 +178,41 @@ consistent with "a week or less" if Phase 0 and the DB step happen today.
 **Not included in that estimate:** the actual statistical validation, because
 per §0 that's wall-clock-bound and keeps accruing after the code is done —
 budget for checking back in on it weekly, not finishing it in week 1.
+
+## 5a. A real design fork from Phase 1 — worth your explicit sign-off
+
+Building the IndiGo adapter surfaced something docs/01/02 discuss in the
+abstract ("Tier 1 anchors the fare structure... published tariffs are
+ranges, not live availability-adjusted prices") but that turned out to have
+a concrete, material consequence once real data was in hand:
+
+**IndiGo's tariff sheet gives a filed floor/ceiling fare per city-pair —
+not a specific-departure-date offer, and not directional** (confirmed: the
+same band applies both ways; no reverse-direction row exists anywhere in the
+68-page document). That doesn't match the `fare_quote` product spec in
+docs/02 §1 (directional, specific departure date, lowest *available* fare)
+in three ways at once.
+
+**Decision made to unblock Phase 1, not hidden in code**: write these rows
+into `fare_quote` anyway — `observation_status='observed'` (it is a real,
+current, verifiable filing) — but tag them `fare_class='tier1_tariff_floor'`
+and anchor `departure_date`/`advance_purchase_days` to a stated convention
+(`collection_ts + 30 days`, `30`) rather than inventing false precision.
+
+**What this means for Phase 3 (index engine)**: the Jevons/Lowe-Young
+computation must filter on `fare_class` and exclude `tier1_tariff_floor`
+rows from the *headline* series — they're validation/anchor data (exactly
+docs/01's framing), not inputs to the live index. If Phase 3 is built
+without that filter, Tier-1 floor bands would silently contaminate the
+headline number with non-directional, non-date-specific data. **Flagging
+this now so it's not rediscovered as a bug three phases from now.**
+
+If you'd rather handle Tier-1 data differently — a separate table instead of
+overloading `fare_quote`, a fifth `observation_status` value, dropping
+Tier-1 from `fare_quote` entirely — that's a reasonable alternative and a
+schema change, not a big one. Current choice was made to keep Phase 1
+moving without a schema migration; revisit before Phase 3 if it doesn't sit
+right.
 
 ## 6. Open questions — decisions to make now, not defer
 
