@@ -1,0 +1,187 @@
+# Implementation Guide — APIx, compressed to a solo full-time build
+
+This turns `docs/00-05` (a 16-week, 2.6-FTE prototype plan) into a build one
+person can execute full-time in about a week of engineering, with an honest
+note on the one thing that timeline *cannot* compress: the collection window.
+
+## 0. The one thing that doesn't compress
+
+**docs/04-delivery-plan.md is explicit: "the validation window is wall-clock
+bound, not effort-bound."** You cannot collect airfare data retroactively.
+Whatever day you get one adapter writing to the database daily, that's day
+zero of the collection window — no amount of additional coding pulls that
+date earlier.
+
+Consequence for a 1-week solo build: **finishing every phase below in a week
+gets you a complete, tested pipeline with a live daily collector — not a
+validated statistic.** Q3 in the open questions (below) already flags that
+even 30 days of collection yields exactly one DGCA monthly comparison point.
+So: engineering can be "done" in a week; the statistical validation output
+accrues afterward, one day at a time, regardless of further coding. Get the
+first Tier-1 adapter running on day 1–2, not day 6, so that clock starts
+early.
+
+## 1. What's cut from the original stack, and why
+
+Compressing 2.6 FTE × 16 weeks into 1 FTE × ~1 week means cutting real scope,
+not just working faster. Cut deliberately, documented here so it's a decision,
+not a silent gap:
+
+| docs/03 target | Cut to, for week 1 | Why this is an acceptable prototype cut |
+|---|---|---|
+| Prefect 3 orchestration | A plain Python script (`scripts/run_collection.py`) run via Windows Task Scheduler | At one run/day, an orchestrator adds ops overhead with no benefit yet. Adapter logic is orchestrator-agnostic, so swapping in Prefect later touches one script, not the adapters |
+| MinIO / S3 | Local content-hashed filesystem store (`apix.storage.object_store`) | Same guarantee (immutable, content-addressed); no Docker available on this machine anyway. One-file swap to real S3 later |
+| PostgreSQL + **TimescaleDB** | Plain **Postgres 17, Supabase-hosted** (`apix-airfare-index` project, `ap-south-1`, free tier) | docs/03 itself says "no part of this project is a scale problem" at ~3k rows/day. A hypertable buys nothing yet. Supabase over the local PostgreSQL 18 install: no local admin/superuser password handling needed, provisioned entirely via tool calls |
+| Parquet + DuckDB analytics layer | Deferred; pandas directly against Postgres | Not needed until back-testing needs to iterate faster than SQL allows |
+| dbt | Deferred; SQL written directly in `scripts/sql/` | Revisit once there's a silver/gold split worth tracking lineage on |
+| Next.js + ECharts dashboard | Streamlit only for week 1 | One surface, fast to build; swap/add Next.js once the API is stable |
+| SDMX-JSON/ML | Stretch goal, Phase 4, after plain JSON/CSV works | High-value but not blocking; `/v1/sdmx/data/{flow}` is stubbed as `501` rather than faked |
+| Tier 3 (booking-engine) adapters | Deferred past week 1 | Tier 1 alone gets a real daily series running; Tier 3 is the least stable, most legally exposed source — build it once Tier 1 is proven, not before |
+
+Kept as-is because they're cheap and high-value from day one: **Scrapling**,
+**Pandera** contracts, **pure-Python Jevons index engine with golden
+fixtures**, **FastAPI**, the **adapter-isolation** architecture, the
+**immutable raw-payload + config_hash** audit trail.
+
+## 2. Environment — what's already true
+
+Checked/set up this session:
+
+- **Database: Supabase-hosted Postgres 17**, project `apix-airfare-index` (id
+  `criogqvlhfzpazgtipwa`, region `ap-south-1`, free tier — $0/month confirmed
+  before creation). Schema applied, all 6 tables live, 10 placeholder routes
+  seeded. A local **PostgreSQL 18** service also exists on this machine
+  (unused for now); `scripts/bootstrap_db.sql` is kept as a fallback if you
+  ever want to move back to fully local Postgres — see the note at its top.
+- **Python 3.11.15** and **uv 0.11.19** available on PATH; `.venv` created,
+  `pytest -q` green (9/9 golden-fixture tests).
+- **No Docker.**
+- Raw shell network egress (`curl` etc.) is sandboxed in this session, but
+  `uv`/`pip` and the Supabase MCP tools work fine — those are the two paths
+  actually used.
+- **Known gap:** Supabase reports Row Level Security disabled on all 6
+  tables. Low-risk in this design (FastAPI talks to Postgres directly, no
+  Supabase anon key is planned to reach a browser) but flagged, not silently
+  fixed — see the RLS note further down if this changes.
+
+## 3. Resources needed from you
+
+Concrete, in the order they're needed:
+
+1. **Nothing to start coding** — the scaffold below doesn't need anything from you.
+2. **The Supabase database password**, so the app itself (not just Claude's
+   Supabase tool calls) can connect: Supabase dashboard → project
+   `apix-airfare-index` → **Project Settings → Database → Reset database
+   password** → paste it into `.env` as part of `DATABASE_URL` (see
+   `env.example`) or hand it to me to wire up. *(In progress as of this
+   write-up — connection not yet verified end-to-end.)*
+3. **DGCA domestic passenger-traffic data** (needed by end of Phase 1 to replace the 10-route placeholder in `config/routes.yaml` with the real ~50-pair, weighted basket). Published by DGCA (dgca.gov.in, "Traffic Statistics" / monthly domestic reports). If you have a copy or a subscription source, send it; otherwise I'll attempt to fetch it via web search/fetch when we reach that step — flag now if you already know this site is awkward to reach.
+4. **Real Tier-1 tariff-sheet URLs**, one per carrier (IndiGo, Air India, Air India Express, Akasa, SpiceJet). I'll attempt to locate and probe these myself in Phase 0/1 (that's genuine reconnaissance work, not something to hand you), but if you already have any bookmarked, they save time.
+5. **No repo cloning needed.** Scrapling installs via `pip`/`uv` — it's not vendored. Nothing else in the stack requires a source checkout. If a specific Tier-3 target later needs Camoufox as a stealth-browser fallback (see docs/03-architecture.md "Known limitation"), that's a `pip install camoufox` away too, not a clone.
+6. **A decision on Q6 (Tier 2 budget)** — see open questions below. Default assumption going in: **no budget**, Tier 1 + Tier 3 only. Tell me if that's wrong.
+7. Nothing else blocks starting. Everything else in the open questions has a stated default good enough to build against.
+
+## 4. What's been scaffolded already (this session)
+
+```
+pyproject.toml            deps: fastapi, sqlalchemy, psycopg, pydantic, pandera,
+                           pandas, pyarrow, pyyaml, apscheduler, scrapling, pytest, streamlit
+env.example                copy to .env
+.gitignore
+scripts/
+  bootstrap_db.sql          run once, by you, as postgres superuser (see §3.2)
+  sql/0001_init.sql         full schema: route, collection_run, selector_confirmation,
+                             fare_quote, stratum_panel, index_value
+  seed_routes.py            loads config/routes.yaml into the route table
+  run_collection.py         the daily entrypoint (empty adapter registry — Phase 1 fills it)
+config/
+  routes.yaml               PLACEHOLDER 10-route basket (§3.3 replaces this)
+  booking_curve.yaml         Q1's assumed-curve default, versioned, with sensitivity alternates
+  suppression.yaml           coverage floors from docs/01
+src/apix/
+  settings.py                 pydantic-settings, reads .env
+  storage/object_store.py     content-hashed immutable local store (MinIO stand-in)
+  contracts/fare_quote.py     pydantic + Pandera FareQuote contract
+  acquisition/base.py         SourceAdapter interface + CollectionResult (isolation boundary)
+  acquisition/tier1_tariff_stub.py   worked adapter TEMPLATE — needs a real URL (Phase 0/1)
+  db/models.py                 SQLAlchemy models mirroring 0001_init.sql
+  db/engine.py
+  index/jevons.py              elementary aggregation, pure function
+  api/main.py                  FastAPI skeleton, /v1/index /v1/routes /v1/coverage /v1/methodology /v1/sdmx/*
+tests/
+  test_jevons.py               9 golden-fixture tests (ILO-style worked examples), passing without a DB
+```
+
+Run the test suite any time with no DB needed:
+```
+uv pip install -e ".[dev]"
+pytest -q
+```
+
+## 5. Phase plan — 2 days or less per phase, full-time solo
+
+Each phase ends with a concrete, checkable Definition of Done, same spirit as
+docs/04 but sized for one person. Numbers assume you start today.
+
+| Phase | Days | Goal | Definition of done |
+|---|---|---|---|
+| **0 — Setup & recon** | 0.5–1 | Environment live (this doc); DB created; robots.txt + ToS check on the 5 carrier sites and 2–3 easiest OTAs; identify 1–2 real Tier-1 tariff-sheet URLs; confirm Q1/Q2/Q6/Q7 defaults (below) | `pytest` green; DB has `route`/`fare_quote`/etc. tables; a written robots.txt verdict per source in a short `docs/06-recon-log.md` |
+| **1 — Vertical slice** | 1–2 | One real Tier-1 adapter, fetching → parsing → writing to Postgres + object store, run manually once successfully. **This is the critical-path phase — get it running even if ugly.** | One real row in `fare_quote` with `observation_status='observed'` and a valid `raw_payload_hash`; `scripts/run_collection.py` runs clean; Task Scheduler entry created so it now runs unattended daily |
+| **2 — Multi-source** | 1–2 | Remaining Tier-1 adapters (all 5 carriers, or as many as have reachable tariff sheets); real ~50-route basket loaded from actual DGCA data; NORMALISE stage (fare decomposition, de-dup across sources) | ≥3 sources landing daily; `route` table has the real weighted basket; a NORMALISE unit test per fare-component rule |
+| **3 — Cleaning & index engine** | 1–2 | Outlier flagging (MAD, within-stratum, log relatives), stratum-mean imputation, Jevons elementary (done) → Lowe/Young upper level with `booking_curve.yaml`, `config_hash` + vintage stamping, coverage-floor suppression | A `stratum_panel` and `index_value` row computed end-to-end from real collected data; recompute is bit-identical on a second run; sensitivity band present on every composite value |
+| **4 — API & dashboard** | 1 | Wire `/v1/index*` to real data (already stubbed); Streamlit dashboard: trend line, coverage panel, at minimum | `GET /v1/index?series=...` returns real numbers; Streamlit page loads and shows the trend and a coverage/suppression indicator |
+| **5 — Docs & validation setup** | 0.5–1 | Revision-policy doc; wire the DGCA comparison metric (direction-of-change) so it's ready the moment a DGCA monthly figure is out; open-questions decisions written down as committed, not just recommended | `docs/07-revision-policy.md` exists; validation script runs against whatever data exists, even if thin |
+
+**Total: ~6–9 focused full-time days** for a working end-to-end pipeline —
+consistent with "a week or less" if Phase 0 and the DB step happen today.
+**Not included in that estimate:** the actual statistical validation, because
+per §0 that's wall-clock-bound and keeps accruing after the code is done —
+budget for checking back in on it weekly, not finishing it in week 1.
+
+## 6. Open questions — decisions to make now, not defer
+
+`docs/05-open-questions.md` lists eight sponsor decisions, each with a
+recommended default so work isn't blocked. For a solo build with no
+separate "sponsor," you're both roles — so these need an actual answer from
+you, not just a default sitting on the page. My recommendation on each,
+adopted as the working assumption unless you say otherwise:
+
+- **Q1 (booking-curve weights) — adopt.** No real distribution is publicly
+  available. `config/booking_curve.yaml` already encodes the assumed curve
+  plus sensitivity alternates, per the recommended default. This is the
+  single biggest methodological soft spot in the whole project — the
+  composite index rests on an assumption, and every composite value must
+  carry its sensitivity band rather than being published as a bare number.
+- **Q2 ("PSD" meaning) — adopt reading 3: DGCA passenger/revenue shares.**
+  It's the only reading that yields CPI-consistent weights, and it's what
+  `route.dgca_pax_weight` in the schema already assumes.
+- **Q3 (back-test) — adopt (a)+(c), lean into (a) for week 1.** 30 days of
+  forward collection gives real engineering/coverage validation and exactly
+  one DGCA monthly comparison point — that's honestly all a solo week-one
+  build can produce. (c), a historical fare archive, is an institutional ask
+  (DGCA TMU records, etc.) — worth a cold email now since it costs you
+  nothing to send, but don't plan week 1 around getting a reply.
+- **Q4 (DGCA/MoSPI engagement) — send the letter anyway.** Doesn't block any
+  phase above; purely upside if it lands.
+- **Q5 (offered vs transaction price) — adopt.** Proceed on offered prices;
+  it's already baked into the product spec and validation-on-changes-only
+  design (docs/02 §3, §10).
+- **Q6 (Tier 2 budget) — assume none**, per §3.7 above. Confirm if wrong;
+  changes nothing structural if you later add a paid feed — it's just
+  another adapter.
+- **Q7 (anti-bot evasion exclusion) — accept the exclusion.** No CAPTCHA
+  solving, no proxy rotation, no session/credential reuse. This isn't just
+  the ethical call — it's the practical one for a solo maintainer: an
+  evasion arms race against enterprise bot management (IndiGo, Air India,
+  MakeMyTrip) is not a fight one person keeps winning, and losing it takes
+  down the whole collector, not just one source. Tier 1 first is what makes
+  this affordable to accept.
+- **Q8 (COICOP 2018 code/weight) — defer as config.** `mospi.gov.in` was
+  reported blocked from this environment when the docs were written; try it
+  again in Phase 0 (network access differs by session) or pull it from a
+  browser yourself. Doesn't block any phase above — it's a metadata label,
+  already designed as a config value, not a schema field.
+
+None of these block starting Phase 0 today. Q1, Q3 and Q7 are the ones
+`docs/04-delivery-plan.md` calls out as changing what gets built — and all
+three already have a committed answer above.
