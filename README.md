@@ -27,6 +27,7 @@ engineering starts — plus a working scaffold implementing them.
 | [`docs/03-architecture.md`](docs/03-architecture.md) | Stack, data model, pipeline stages, API surface, testing strategy |
 | [`docs/04-delivery-plan.md`](docs/04-delivery-plan.md) | The original 16-week, 2.6-FTE phased plan: risk register, effort estimate, wall-clock critical path |
 | [`docs/05-open-questions.md`](docs/05-open-questions.md) | Eight decisions needed from the sponsor, with recommended defaults |
+| [`docs/06-recon-log.md`](docs/06-recon-log.md) | Phase 0 findings: real tariff-sheet URLs and live robots.txt verdicts per carrier, not estimates |
 | [`IMPLEMENTATION.md`](IMPLEMENTATION.md) | **Start here to build.** Compresses docs/00-05 into a ~week-long solo build: environment, resources needed, phase-by-phase plan, committed answers to the open questions |
 
 ## Quick start

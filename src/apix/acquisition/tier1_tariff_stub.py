@@ -41,8 +41,15 @@ CONFIG_HASH = "tier1_tariff_stub_v0"  # bump when selectors or logic change
 class Tier1TariffStubAdapter(SourceAdapter):
     name = "tier1_tariff_stub"
 
-    # TODO(Phase 0): replace with the carrier's actual published tariff-sheet URL
-    # (Rule 135(2), Aircraft Rules 1937 / DGCA ATC 02 of 2010 mandates one exists).
+    # TODO(Phase 1): pick a real carrier and URL from docs/06-recon-log.md —
+    # candidates already found there (verify live before trusting, see that
+    # doc's "Open items carried into Phase 1"):
+    #   IndiGo:  https://www.goindigo.in/content/dam/s6web/in/en/assets/documents/IndiGo-Tariff-Sheet-2026-05-08.pdf
+    #   Air India: https://www.airindia.com/content/dam/air-india/pdfs/tariff/TARIFF-SHEET-AS-ON-15JUN26.pdf
+    #   Air India Express: BLOCKED by robots.txt (Disallow: /content/dam) — do not use as-is
+    #   Akasa Air: https://assets.akasaair.com/f/159922/x/c1ce86c83e/fare-sheet-akasa-air.pdf (crawl posture unconfirmed)
+    # Recommended starting point: IndiGo — the only one with both a URL and a
+    # robots.txt path that isn't blocked or ambiguous.
     target_url = "https://example-airline.invalid/tariff-sheet"
 
     def __init__(self) -> None:
