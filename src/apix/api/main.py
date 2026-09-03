@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException, Query
 from sqlalchemy import select
 
 from apix.db.engine import get_session
-from apix.db.models import IndexValue, Route
+from apix.db.models import FareQuoteRow, IndexValue, Route
 
 app = FastAPI(
     title="APIx — Airfare Price Index for India",
@@ -94,6 +94,46 @@ def get_routes() -> list[dict]:
             "destination": r.destination,
             "stratum_class": r.stratum_class,
             "dgca_pax_weight": float(r.dgca_pax_weight) if r.dgca_pax_weight is not None else None,
+        }
+        for r in rows
+    ]
+
+
+@app.get("/v1/quotes")
+def get_quotes(
+    route_id: int | None = Query(None),
+    carrier: str | None = Query(None),
+    from_: date | None = Query(None, alias="from"),
+    to: date | None = Query(None),
+    limit: int = Query(100, le=1000),
+) -> list[dict]:
+    """Research access — docs/03-architecture.md#api-surface: "rate-limited,
+    filtered". Filtering is here; rate-limiting is not wired yet (TODO Phase 4:
+    add slowapi or an API-gateway-level limiter before this is exposed
+    publicly — fine to leave open on localhost during development).
+    """
+    with get_session() as session:
+        stmt = select(FareQuoteRow)
+        if route_id is not None:
+            stmt = stmt.where(FareQuoteRow.route_id == route_id)
+        if carrier is not None:
+            stmt = stmt.where(FareQuoteRow.carrier == carrier)
+        if from_:
+            stmt = stmt.where(FareQuoteRow.departure_date >= from_)
+        if to:
+            stmt = stmt.where(FareQuoteRow.departure_date <= to)
+        stmt = stmt.order_by(FareQuoteRow.collection_ts.desc()).limit(limit)
+        rows = session.execute(stmt).scalars().all()
+    return [
+        {
+            "quote_id": str(r.quote_id),
+            "carrier": r.carrier,
+            "route_id": r.route_id,
+            "departure_date": r.departure_date.isoformat(),
+            "collection_ts": r.collection_ts.isoformat(),
+            "advance_purchase_days": r.advance_purchase_days,
+            "total_fare": float(r.total_fare) if r.total_fare is not None else None,
+            "observation_status": r.observation_status,
         }
         for r in rows
     ]

@@ -1,17 +1,21 @@
 # AirTimeScanner — Real-time Airfare Price Index for India (APIx)
 
-Scoping repository for an automated airfare price-collection and index-construction
-platform intended to augment the Consumer Price Index published by the National
-Statistical Office (NSO), MoSPI.
+Automated airfare price-collection and index-construction platform intended to
+augment the Consumer Price Index published by the National Statistical Office
+(NSO), MoSPI.
 
-**Status: scoping only. No implementation code in this repository yet.**
+**Status: scaffolded and running.** Schema live on a Supabase-hosted Postgres
+instance, FastAPI skeleton serving the full documented `/v1` surface, index
+engine unit-tested against golden fixtures. No adapter has a real target URL
+wired in yet — that's the current work. See [`IMPLEMENTATION.md`](IMPLEMENTATION.md)
+for the compressed solo build plan and exactly what's done vs. pending.
 
 ## What this is
 
-A set of design documents that turn the problem statement into a buildable,
-defensible project: what gets built, what deliberately does not, which
-statistical choices determine credibility, and which questions must be answered
-by the sponsor before engineering starts.
+Design documents that turn the problem statement into a buildable, defensible
+project — what gets built, what deliberately does not, which statistical
+choices determine credibility, which questions must be answered before
+engineering starts — plus a working scaffold implementing them.
 
 ## Read in this order
 
@@ -21,8 +25,19 @@ by the sponsor before engineering starts.
 | [`docs/01-data-acquisition.md`](docs/01-data-acquisition.md) | The four-tier source ladder, the statutory sources most teams miss, legal posture, what we refuse to build |
 | [`docs/02-methodology.md`](docs/02-methodology.md) | Product specification, elementary aggregation, weighting, chain drift, imputation, the day-of-week artefact |
 | [`docs/03-architecture.md`](docs/03-architecture.md) | Stack, data model, pipeline stages, API surface, testing strategy |
-| [`docs/04-delivery-plan.md`](docs/04-delivery-plan.md) | Phases, the wall-clock critical path, risk register, effort estimate |
+| [`docs/04-delivery-plan.md`](docs/04-delivery-plan.md) | The original 16-week, 2.6-FTE phased plan: risk register, effort estimate, wall-clock critical path |
 | [`docs/05-open-questions.md`](docs/05-open-questions.md) | Eight decisions needed from the sponsor, with recommended defaults |
+| [`IMPLEMENTATION.md`](IMPLEMENTATION.md) | **Start here to build.** Compresses docs/00-05 into a ~week-long solo build: environment, resources needed, phase-by-phase plan, committed answers to the open questions |
+
+## Quick start
+
+```
+uv venv --python 3.11 .venv
+uv pip install -e ".[dev]" --python .venv
+cp env.example .env   # fill in DATABASE_URL — see IMPLEMENTATION.md §2/§3
+pytest -q             # 9 golden-fixture tests, no DB needed
+uvicorn apix.api.main:app --reload --app-dir src   # http://127.0.0.1:8000/docs
+```
 
 ## The three findings that reshape this project
 

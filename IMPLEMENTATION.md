@@ -45,78 +45,112 @@ fixtures**, **FastAPI**, the **adapter-isolation** architecture, the
 
 ## 2. Environment — what's already true
 
-Checked/set up this session:
+Checked/set up this session, all independently verified (not just asserted):
 
 - **Database: Supabase-hosted Postgres 17**, project `apix-airfare-index` (id
   `criogqvlhfzpazgtipwa`, region `ap-south-1`, free tier — $0/month confirmed
   before creation). Schema applied, all 6 tables live, 10 placeholder routes
-  seeded. A local **PostgreSQL 18** service also exists on this machine
-  (unused for now); `scripts/bootstrap_db.sql` is kept as a fallback if you
-  ever want to move back to fully local Postgres — see the note at its top.
+  seeded. **Connection verified end-to-end**: SQLAlchemy → Postgres →
+  FastAPI `GET /v1/routes` → real 10-row JSON response. A local
+  **PostgreSQL 18** service also exists on this machine (unused for now);
+  `scripts/bootstrap_db.sql` is kept as a fallback if you ever want to move
+  back to fully local Postgres — see the note at its top.
 - **Python 3.11.15** and **uv 0.11.19** available on PATH; `.venv` created,
   `pytest -q` green (9/9 golden-fixture tests).
+- **Scrapling requires its `[fetchers]` extra** (`curl_cffi`, `playwright`,
+  `patchright`, `browserforge`) — bare `scrapling` cannot even import
+  `Fetcher`. Fixed in `pyproject.toml` (`scrapling[fetchers]>=0.4.15`) and
+  verified with a real `Fetcher.get()` call against a live URL (200 OK).
+  Browser binaries (`playwright install` / Scrapling's own installer) are
+  **not** needed yet — Tier 1 targets are static pages fetched via plain
+  `Fetcher`, no browser. Only pull those in if/when Tier 3 (StealthyFetcher/
+  DynamicFetcher) actually starts, per "probe before escalating."
 - **No Docker.**
 - Raw shell network egress (`curl` etc.) is sandboxed in this session, but
-  `uv`/`pip` and the Supabase MCP tools work fine — those are the two paths
-  actually used.
-- **Known gap:** Supabase reports Row Level Security disabled on all 6
-  tables. Low-risk in this design (FastAPI talks to Postgres directly, no
-  Supabase anon key is planned to reach a browser) but flagged, not silently
-  fixed — see the RLS note further down if this changes.
+  `uv`/`pip`, live HTTP fetches from Python (`Fetcher.get`, `urllib`), and the
+  Supabase MCP tools all work fine — those are the paths actually used.
+- **Known gap, not fixed, your call:** Supabase reports Row Level Security
+  disabled on all 6 tables. Low-risk in this design (FastAPI talks to
+  Postgres directly, no Supabase anon key is planned to reach a browser) but
+  flagged, not silently fixed — the remediation SQL is sitting in this
+  session's history if you want it applied.
 
 ## 3. Resources needed from you
 
 Concrete, in the order they're needed:
 
-1. **Nothing to start coding** — the scaffold below doesn't need anything from you.
-2. **The Supabase database password**, so the app itself (not just Claude's
-   Supabase tool calls) can connect: Supabase dashboard → project
-   `apix-airfare-index` → **Project Settings → Database → Reset database
-   password** → paste it into `.env` as part of `DATABASE_URL` (see
-   `env.example`) or hand it to me to wire up. *(In progress as of this
-   write-up — connection not yet verified end-to-end.)*
-3. **DGCA domestic passenger-traffic data** (needed by end of Phase 1 to replace the 10-route placeholder in `config/routes.yaml` with the real ~50-pair, weighted basket). Published by DGCA (dgca.gov.in, "Traffic Statistics" / monthly domestic reports). If you have a copy or a subscription source, send it; otherwise I'll attempt to fetch it via web search/fetch when we reach that step — flag now if you already know this site is awkward to reach.
-4. **Real Tier-1 tariff-sheet URLs**, one per carrier (IndiGo, Air India, Air India Express, Akasa, SpiceJet). I'll attempt to locate and probe these myself in Phase 0/1 (that's genuine reconnaissance work, not something to hand you), but if you already have any bookmarked, they save time.
-5. **No repo cloning needed.** Scrapling installs via `pip`/`uv` — it's not vendored. Nothing else in the stack requires a source checkout. If a specific Tier-3 target later needs Camoufox as a stealth-browser fallback (see docs/03-architecture.md "Known limitation"), that's a `pip install camoufox` away too, not a clone.
-6. **A decision on Q6 (Tier 2 budget)** — see open questions below. Default assumption going in: **no budget**, Tier 1 + Tier 3 only. Tell me if that's wrong.
-7. Nothing else blocks starting. Everything else in the open questions has a stated default good enough to build against.
+1. ~~Nothing to start coding~~ / ~~Supabase database password~~ — **both done.**
+   The app connects end-to-end; see §2.
+2. **DGCA domestic passenger-traffic data** (needed by end of Phase 1 to replace the 10-route placeholder in `config/routes.yaml` with the real ~50-pair, weighted basket). Published by DGCA (dgca.gov.in, "Traffic Statistics" / monthly domestic reports). If you have a copy or a subscription source, send it; otherwise I'll attempt to fetch it via web search/fetch when we reach that step — flag now if you already know this site is awkward to reach.
+3. **Real Tier-1 tariff-sheet URLs**, one per carrier (IndiGo, Air India, Air India Express, Akasa, SpiceJet). I'll attempt to locate and probe these myself in Phase 0/1 (that's genuine reconnaissance work, not something to hand you), but if you already have any bookmarked, they save time.
+4. **No repo cloning needed.** Scrapling installs via `pip`/`uv` — it's not vendored. Nothing else in the stack requires a source checkout. If a specific Tier-3 target later needs Camoufox as a stealth-browser fallback (see docs/03-architecture.md "Known limitation"), that's a `pip install camoufox` away too, not a clone.
+5. **A decision on Q6 (Tier 2 budget)** — see open questions below. Default assumption going in: **no budget**, Tier 1 + Tier 3 only. Tell me if that's wrong.
+6. Nothing else blocks starting. Everything else in the open questions has a stated default good enough to build against.
+
+### Phase 0 dependency checklist
+
+Everything the code actually needs to run, confirmed present or fixed this
+session — kept here so Phase 0 is the single place this gets checked, not
+rediscovered mid-Phase-1:
+
+| Dependency | Status |
+|---|---|
+| Python 3.11, `uv` | ✅ present |
+| `fastapi`, `sqlalchemy`, `psycopg[binary]`, `pydantic`, `pandera`, `pandas`, `pyyaml` | ✅ installed, imports verified |
+| `scrapling[fetchers]` (curl_cffi, playwright, patchright, browserforge) | ✅ fixed this session — bare `scrapling` was missing `curl_cffi` and couldn't import `Fetcher` at all; extra added to `pyproject.toml`, reinstalled, a live `Fetcher.get()` call verified working |
+| Playwright/Camoufox **browser binaries** | ⬜ not installed, **not needed yet** — only required once a Tier-3 target forces `StealthyFetcher`/`DynamicFetcher`; run `playwright install chromium` (or Scrapling's own installer) at that point, not before |
+| Supabase Postgres connection | ✅ verified end-to-end (SQLAlchemy → DB → FastAPI response) |
+| `pytest`, `ruff`, `streamlit` (dev extras) | ✅ installed |
+| Windows Task Scheduler entry for daily collection | ⬜ Phase 1, once an adapter has a real target |
 
 ## 4. What's been scaffolded already (this session)
 
 ```
-pyproject.toml            deps: fastapi, sqlalchemy, psycopg, pydantic, pandera,
-                           pandas, pyarrow, pyyaml, apscheduler, scrapling, pytest, streamlit
-env.example                copy to .env
+pyproject.toml            deps: fastapi, sqlalchemy, psycopg, pydantic, pandera, pandas,
+                           pyarrow, pyyaml, apscheduler, scrapling[fetchers], pytest, streamlit
+env.example                copy to .env — points at Supabase by default now
 .gitignore
 scripts/
-  bootstrap_db.sql          run once, by you, as postgres superuser (see §3.2)
+  bootstrap_db.sql          NOT in use — local-Postgres fallback path only, see its header
   sql/0001_init.sql         full schema: route, collection_run, selector_confirmation,
-                             fare_quote, stratum_panel, index_value
+                             fare_quote, stratum_panel, index_value — matches docs/03 1:1
   seed_routes.py            loads config/routes.yaml into the route table
   run_collection.py         the daily entrypoint (empty adapter registry — Phase 1 fills it)
 config/
-  routes.yaml               PLACEHOLDER 10-route basket (§3.3 replaces this)
+  routes.yaml               PLACEHOLDER 10-route basket (§3.2 replaces this)
   booking_curve.yaml         Q1's assumed-curve default, versioned, with sensitivity alternates
-  suppression.yaml           coverage floors from docs/01
+  suppression.yaml           coverage floors from docs/01 (60%/75%, matches exactly)
 src/apix/
   settings.py                 pydantic-settings, reads .env
   storage/object_store.py     content-hashed immutable local store (MinIO stand-in)
   contracts/fare_quote.py     pydantic + Pandera FareQuote contract
   acquisition/base.py         SourceAdapter interface + CollectionResult (isolation boundary)
-  acquisition/tier1_tariff_stub.py   worked adapter TEMPLATE — needs a real URL (Phase 0/1)
+  acquisition/tier1_tariff_stub.py   worked adapter TEMPLATE, using the real (verified)
+                             scrapling 0.4.15 API — needs a real target URL (Phase 0/1)
   db/models.py                 SQLAlchemy models mirroring 0001_init.sql
   db/engine.py
   index/jevons.py              elementary aggregation, pure function
-  api/main.py                  FastAPI skeleton, /v1/index /v1/routes /v1/coverage /v1/methodology /v1/sdmx/*
+  api/main.py                  FastAPI skeleton — full docs/03 surface: /v1/index[/latest],
+                             /v1/routes, /v1/quotes, /v1/coverage, /v1/methodology, /v1/sdmx/*
 tests/
   test_jevons.py               9 golden-fixture tests (ILO-style worked examples), passing without a DB
 ```
 
 Run the test suite any time with no DB needed:
 ```
-uv pip install -e ".[dev]"
+uv venv --python 3.11 .venv
+uv pip install -e ".[dev]" --python .venv
 pytest -q
 ```
+
+**Cross-checked this session, fixed where wrong** (so this section stays a
+statement of fact, not aspiration): `pyproject.toml`'s Scrapling dependency
+was missing the `[fetchers]` extra and couldn't actually run; the adapter
+template called `Fetcher.get(..., adaptive=True)`, which doesn't exist on
+that method (adaptive belongs on `.css()`/`.xpath()`) — both fixed and
+re-verified against the installed package. `api/main.py` was missing
+`/v1/quotes` from docs/03's documented surface — added. `README.md` still
+said "no implementation code yet" — updated to match reality.
 
 ## 5. Phase plan — 2 days or less per phase, full-time solo
 
@@ -125,7 +159,7 @@ docs/04 but sized for one person. Numbers assume you start today.
 
 | Phase | Days | Goal | Definition of done |
 |---|---|---|---|
-| **0 — Setup & recon** | 0.5–1 | Environment live (this doc); DB created; robots.txt + ToS check on the 5 carrier sites and 2–3 easiest OTAs; identify 1–2 real Tier-1 tariff-sheet URLs; confirm Q1/Q2/Q6/Q7 defaults (below) | `pytest` green; DB has `route`/`fare_quote`/etc. tables; a written robots.txt verdict per source in a short `docs/06-recon-log.md` |
+| **0 — Setup & recon** | 0.5–1 | ✅ **Environment/DB/scaffold done** (Supabase live, `.venv` + deps installed incl. `scrapling[fetchers]`, `pytest` green, API skeleton complete, connection verified end-to-end). ⬜ **Remaining:** robots.txt + ToS check on the 5 carrier sites and 2–3 easiest OTAs; identify 1–2 real Tier-1 tariff-sheet URLs; confirm Q1/Q2/Q6/Q7 defaults (§6) | Written robots.txt verdict per source in a short `docs/06-recon-log.md`; at least one confirmed-fetchable Tier-1 URL to hand to Phase 1 |
 | **1 — Vertical slice** | 1–2 | One real Tier-1 adapter, fetching → parsing → writing to Postgres + object store, run manually once successfully. **This is the critical-path phase — get it running even if ugly.** | One real row in `fare_quote` with `observation_status='observed'` and a valid `raw_payload_hash`; `scripts/run_collection.py` runs clean; Task Scheduler entry created so it now runs unattended daily |
 | **2 — Multi-source** | 1–2 | Remaining Tier-1 adapters (all 5 carriers, or as many as have reachable tariff sheets); real ~50-route basket loaded from actual DGCA data; NORMALISE stage (fare decomposition, de-dup across sources) | ≥3 sources landing daily; `route` table has the real weighted basket; a NORMALISE unit test per fare-component rule |
 | **3 — Cleaning & index engine** | 1–2 | Outlier flagging (MAD, within-stratum, log relatives), stratum-mean imputation, Jevons elementary (done) → Lowe/Young upper level with `booking_curve.yaml`, `config_hash` + vintage stamping, coverage-floor suppression | A `stratum_panel` and `index_value` row computed end-to-end from real collected data; recompute is bit-identical on a second run; sensitivity band present on every composite value |
