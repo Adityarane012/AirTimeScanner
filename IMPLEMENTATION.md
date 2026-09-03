@@ -48,7 +48,7 @@ fixtures**, **FastAPI**, the **adapter-isolation** architecture, the
 Checked/set up this session, all independently verified (not just asserted):
 
 - **Database: Supabase-hosted Postgres 17**, project `apix-airfare-index` (id
-  `criogqvlhfzpazgtipwa`, region `ap-south-1`, free tier — $0/month confirmed
+  `<project ref kept out of this public repo — see .env>`, region `ap-south-1`, free tier — $0/month confirmed
   before creation). Schema applied, all 6 tables live, 10 placeholder routes
   seeded. **Connection verified end-to-end**: SQLAlchemy → Postgres →
   FastAPI `GET /v1/routes` → real 10-row JSON response. A local
@@ -69,11 +69,17 @@ Checked/set up this session, all independently verified (not just asserted):
 - Raw shell network egress (`curl` etc.) is sandboxed in this session, but
   `uv`/`pip`, live HTTP fetches from Python (`Fetcher.get`, `urllib`), and the
   Supabase MCP tools all work fine — those are the paths actually used.
-- **Known gap, not fixed, your call:** Supabase reports Row Level Security
-  disabled on all 6 tables. Low-risk in this design (FastAPI talks to
-  Postgres directly, no Supabase anon key is planned to reach a browser) but
-  flagged, not silently fixed — the remediation SQL is sitting in this
-  session's history if you want it applied.
+- **Security posture (hardened, verified):** Row Level Security is **enabled
+  on all 6 tables** with no policies. That is the intended end state here,
+  not an oversight: this project never uses Supabase's anon/authenticated
+  PostgREST path — the app connects directly as the `postgres` role, which
+  **bypasses RLS** — so RLS-on-with-no-policies fully closes anonymous REST
+  access while leaving the application untouched. Verified after applying:
+  the CRITICAL `rls_disabled_in_public` advisory cleared, only the expected
+  INFO-level `rls_enabled_no_policy` remains, and app reads still work.
+  **This repo is public**, so the Supabase project ref and password live in
+  `.env` only and must never enter a tracked file — see the pre-commit guard
+  in `scripts/check_secrets.py`.
 
 ## 3. Resources needed from you
 
