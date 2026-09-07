@@ -97,7 +97,7 @@ def test_parses_the_economy_table():
     assert (first.origin_city, first.destination_city) == ("Delhi", "Hyderabad")
     assert first.distance_km == 1265
     assert first.band_type == "Minimum"
-    assert first.fares[0] == Decimal("1250")
+    assert first.fares[0] == Decimal(1250)
 
 
 def test_domestic_fares_subheading_does_not_end_the_section():
@@ -118,7 +118,7 @@ def test_other_cabins_are_never_read_as_economy():
     """docs/02 §1 specifies economy. A premium fare leaking in would silently
     inflate the index."""
     rows, _ = parse_base_fares([ECONOMY_PAGE, OTHER_CABIN_PAGE], KNOWN)
-    assert all(r.fares[0] != Decimal("99999") for r in rows)
+    assert all(r.fares[0] != Decimal(99999) for r in rows)
     assert len(rows) == 4
 
 
@@ -135,22 +135,22 @@ def test_udf_is_read_for_every_airport_not_just_the_labelled_row():
     """The tax-code cell is vertically merged onto one row. Classifying by
     that label captured Bengaluru alone and missed the other 35 airports."""
     schedule = parse_tax_schedule([TAX_TABLE])
-    assert schedule.udf_for("Bengaluru") == Decimal("649")  # the labelled row
-    assert schedule.udf_for("Delhi") == Decimal("152")      # unlabelled
-    assert schedule.udf_for("Hyderabad") == Decimal("885")  # unlabelled
-    assert schedule.udf_for("Ahmedabad") == Decimal("708")  # before the label
+    assert schedule.udf_for("Bengaluru") == Decimal(649)  # the labelled row
+    assert schedule.udf_for("Delhi") == Decimal(152)      # unlabelled
+    assert schedule.udf_for("Hyderabad") == Decimal(885)  # unlabelled
+    assert schedule.udf_for("Ahmedabad") == Decimal(708)  # before the label
 
 
 def test_named_charges_are_classified_by_their_own_label():
     schedule = parse_tax_schedule([TAX_TABLE])
-    assert schedule.asf == Decimal("236")
-    assert schedule.rcs == Decimal("10")
-    assert schedule.cute == Decimal("160")
+    assert schedule.asf == Decimal(236)
+    assert schedule.rcs == Decimal(10)
+    assert schedule.cute == Decimal(160)
 
 
 def test_arrival_side_charges_are_kept_separate_from_udf():
     schedule = parse_tax_schedule([TAX_TABLE])
-    assert schedule.arrival_by_iata["DEL"] == Decimal("66")
+    assert schedule.arrival_by_iata["DEL"] == Decimal(66)
     # The arrival row must not have been mistaken for a departure UDF.
     assert "All" not in schedule.udf_by_city
 
@@ -158,7 +158,7 @@ def test_arrival_side_charges_are_kept_separate_from_udf():
 def test_not_applicable_charges_are_absent_not_zero():
     """PSF is filed NA. Recording it as 0 would assert it was measured."""
     schedule = parse_tax_schedule([TAX_TABLE])
-    assert all(v != Decimal("0") for v in schedule.udf_by_city.values())
+    assert all(v != Decimal(0) for v in schedule.udf_by_city.values())
 
 
 def test_an_airport_with_no_filed_udf_returns_none():
@@ -173,10 +173,10 @@ def test_an_airport_with_no_filed_udf_returns_none():
 
 def test_fuel_surcharge_bands():
     schedule = parse_tax_schedule([TAX_TABLE, FUEL_TABLE])
-    assert schedule.fuel_for(300) == Decimal("299")
-    assert schedule.fuel_for(700) == Decimal("399")
-    assert schedule.fuel_for(1265) == Decimal("549")
-    assert schedule.fuel_for(2500) == Decimal("899")
+    assert schedule.fuel_for(300) == Decimal(299)
+    assert schedule.fuel_for(700) == Decimal(399)
+    assert schedule.fuel_for(1265) == Decimal(549)
+    assert schedule.fuel_for(2500) == Decimal(899)
 
 
 def test_a_distance_the_filed_bands_do_not_cover_returns_none():
