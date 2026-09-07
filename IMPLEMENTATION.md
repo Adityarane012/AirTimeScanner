@@ -175,7 +175,7 @@ docs/04 but sized for one person. Numbers assume you start today.
 | **0 — Setup & recon** | 0.5–1 | ✅ **Done and signed off** — see `docs/06-recon-log.md`'s "Phase 0 sign-off" section: real tariff-sheet URLs for 4/5 carriers, IndiGo fully live-verified (robots.txt, T&C, actual fetch), one real conflict found and left unresolved rather than routed around (Air India Express), Q4/Q6/Q7 addressed (Q4 outreach drafted in `docs/07-dgca-outreach-draft.md`, not yet sent — that's yours to do) | See `docs/06-recon-log.md` |
 | **1 — Vertical slice** | 1–2 | ⚠️ **Built, then blocked — see §5b.** The adapter (`tier1_indigo.py` + `pdf_tariff.py`) is real and works: it fetches, parses the "ONE WAY ECONOMY FARES" section (68 pages, MINUS-SIGN separator, multi-section guard) and writes to Supabase. But wiring the compliance module in revealed the source is **robots.txt-disallowed** (`Disallow: *.pdf`), so it now correctly refuses to collect. Three further defects found in the same review are fixed (§5b) | **Not met.** The DoD claimed "4 real rows" — those rows were 3 duplicate copies of 2 observations, caused by a frozen `collection_ts`, and were collected via a disallowed fetch. They are now de-duplicated and flagged `exclusion_reason`. **The live daily series has not actually started** — see §0 on why that clock matters. 41/41 tests green |
 | **2 — Multi-source** | 1–2 | Remaining Tier-1 adapters (all 5 carriers, or as many as have reachable tariff sheets); real ~50-route basket loaded from actual DGCA data; NORMALISE stage (fare decomposition, de-dup across sources); **resolve the Tier-1-vs-Tier-3 semantics question flagged below before this phase's index-relevant work** | ≥3 sources landing daily; `route` table has the real weighted basket; a NORMALISE unit test per fare-component rule |
-| **3 — Cleaning & index engine** | 1–2 | Outlier flagging (MAD, within-stratum, log relatives), stratum-mean imputation, Jevons elementary (done) → Lowe/Young upper level with `booking_curve.yaml`, `config_hash` + vintage stamping, coverage-floor suppression | A `stratum_panel` and `index_value` row computed end-to-end from real collected data; recompute is bit-identical on a second run; sensitivity band present on every composite value |
+| **3 — Cleaning & index engine** | 1–2 | ✅ **Engine built and verified — see §5c.** MAD outlier flagging on log relatives within stratum, stratum class-mean imputation, Jevons elementary → Lowe/Young upper level with `booking_curve.yaml`, config-hash and vintage stamping, coverage-floor suppression, mandatory sensitivity band, and the 7-day centred moving average docs/02 §5 requires for the daily headline | **Met, with one caveat stated in §5c.** `stratum_panel` and `index_value` are written end-to-end through the real Supabase tables; recompute is bit-identical and `persist()` is idempotent (both verified); every composite carries a sensitivity band by construction. The caveat: the end-to-end run was exercised on **synthetic** observations, because the acquisition blocker means no real eligible quotes exist yet. 72/72 tests green |
 | **4 — API & dashboard** | 1 | Wire `/v1/index*` to real data (already stubbed); Streamlit dashboard: trend line, coverage panel, at minimum | `GET /v1/index?series=...` returns real numbers; Streamlit page loads and shows the trend and a coverage/suppression indicator |
 | **5 — Docs & validation setup** | 0.5–1 | Revision-policy doc; wire the DGCA comparison metric (direction-of-change) so it's ready the moment a DGCA monthly figure is out; open-questions decisions written down as committed, not just recommended | `docs/07-revision-policy.md` exists; validation script runs against whatever data exists, even if thin |
 
@@ -289,6 +289,62 @@ compliance module was called by anything. `tests/test_tier1_indigo.py` now
 covers that seam. **A phase is not done because its tests pass; it is done when
 its output has been inspected.** Neither the duplicate rows nor the disallowed
 fetch would have survived one look at the actual table.
+
+## 5c. Phase 3 — what was built, and the one thing it cannot yet do
+
+The engine is in `src/apix/index/`, split so the statistics are testable
+without a database anywhere near them:
+
+| Module | Responsibility |
+|---|---|
+| `config.py` | Versioned methodology parameters, `config_hash`, `vintage_id` |
+| `relatives.py` | Fixed-base matched price relatives, MAD outlier flagging, class-mean imputation |
+| `aggregate.py` | Jevons elementary, Lowe/Young upper level, suppression, sensitivity band, centred MA |
+| `jevons.py` | Elementary formula (unchanged from Phase 1) |
+| `engine.py` | The only module that touches the DB or the clock |
+| `scripts/run_index.py` | Entrypoint; `--dry-run` inspects a methodology change before it publishes |
+
+### Decisions worth knowing about
+
+- **`config_hash` is taken over canonicalised parameters, not file bytes.**
+  Reformatting a YAML file or editing a comment must not invent a new
+  methodology vintage; changing a weight must.
+- **`vintage_id` is deterministic in (date, config).** Recomputing the same day
+  under the same methodology reproduces the same vintage and upserts over
+  itself, which is what makes docs/02 §9's "recomputable bit-for-bit"
+  checkable rather than aspirational.
+- **The sensitivity band is structural.** `aggregate.composite()` is the only
+  way to produce a composite value and it always returns the band, so docs/02
+  §4's "never publish a bare point estimate" cannot be forgotten.
+- **The `tier1_tariff_floor` filter is in.** IMPLEMENTATION.md §5a flagged this
+  three phases in advance; `engine.load_observations()` excludes those rows, as
+  it does any row carrying an `exclusion_reason`.
+- **MAD needed a documented fallback.** The median absolute deviation
+  degenerates to zero whenever half the observations are identical — which is
+  the normal case here, a stratum of four unchanged carriers and one that
+  spiked. Taking that as "no dispersion" would blind the rule to exactly what
+  it exists for, so it falls back to Iglewicz & Hoaglin's mean-absolute-
+  deviation estimator. Found by a test, not in review.
+- **Monthly multilateral (GEKS-Jevons) is deliberately NOT built.** docs/02 §8
+  specifies it for the monthly headline over a 13-month rolling window. It is
+  outside this phase's stated scope, and with no collection window started
+  there is nothing to run it on. Daily and weekly remain fixed-base bilateral
+  within the month, exactly as §8 requires — no chaining anywhere.
+
+### The caveat, stated plainly
+
+Phase 3's definition of done says "computed end-to-end from **real collected
+data**". That half is **not** met, and cannot be until the acquisition blocker
+in §5b is resolved. `fare_quote` holds two rows, both excluded.
+
+What was verified instead: the full path — including `persist()` against the
+real Supabase tables, its idempotency on a second run, and the coverage-floor
+suppression logic — exercised on synthetic observations, then cleaned up. The
+statistical rules are pinned by 42 golden-fixture tests whose expected values
+are hand-worked from docs/02, not recorded from a run.
+
+So the engine is ready and will produce a series the day real quotes start
+arriving. It has not yet produced one.
 
 ## 6. Open questions — decisions to make now, not defer
 
