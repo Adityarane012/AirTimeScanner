@@ -7,7 +7,7 @@ origin+destination). Run after applying scripts/sql/0001_init.sql.
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -15,8 +15,8 @@ from sqlalchemy import select
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from apix.db.engine import get_session  # noqa: E402
-from apix.db.models import Route  # noqa: E402
+from apix.db.engine import get_session
+from apix.db.models import Route
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "routes.yaml"
 
@@ -38,7 +38,7 @@ def main() -> None:
                     direction=f"{r['origin']}->{r['destination']}",
                     stratum_class=r["stratum_class"],
                     active=True,
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                 )
             )
         session.commit()

@@ -49,7 +49,7 @@ class FareQuote(BaseModel):
     raw_payload_hash: str | None = None
 
     @model_validator(mode="after")
-    def _consistency(self) -> "FareQuote":
+    def _consistency(self) -> FareQuote:
         if self.observation_status == "observed":
             if self.total_fare is None:
                 raise ValueError("observed quotes must carry a total_fare")
