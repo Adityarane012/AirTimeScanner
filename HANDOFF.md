@@ -1,6 +1,6 @@
 # Session Handoff — AirTimeScanner / APIx
 
-> **Last updated:** 2026-09-03 ~23:00 IST
+> **Last updated:** 2026-09-07, end of session
 > **Purpose:** Everything the next coding session needs to pick up without re-reading the entire codebase.
 
 ---
@@ -17,73 +17,98 @@
 
 | Phase | Status | Notes |
 |---|---|---|
-| **0 — Setup & recon** | ⚠️ Partly invalid | Supabase live, tariff URLs found — but the robots.txt verdicts were reached by grepping for path substrings, which **missed a `Disallow: *.pdf` rule and produced a false "allowed" for IndiGo**. See the Correction section in `docs/06-recon-log.md`. Air India / Akasa / SpiceJet verdicts are unverified for the same reason |
-| **1 — Vertical slice** | ⚠️ Built, then blocked | Adapter is real and works; the source is robots.txt-disallowed, so it now correctly refuses to collect. Four silent defects found and fixed — see `IMPLEMENTATION.md §5b` |
-| **2 — Multi-source** | 🛑 Blocked on a decision | Cannot proceed as written: there is currently **no compliant automated Tier-1 source**. Needs an operator decision before code |
-| **3 — Cleaning & index engine** | ❌ Pending | Unblocked-ish — can be built against fixtures without live collection |
-| **4 — API & dashboard** | ❌ Pending | |
+| **0 — Setup & recon** | ✅ Re-verified | Every carrier robots verdict re-checked with a real parser. Two of the original five verdicts were wrong. See `docs/06-recon-log.md` |
+| **1 — Vertical slice** | ⚠️ Built, source blocked | IndiGo adapter works but its source is robots.txt-disallowed (`Disallow: *.pdf`). Four silent defects found and fixed — `IMPLEMENTATION.md §5b` |
+| **2 — Multi-source** | 🟡 **UNBLOCKED — in progress** | Air India confirmed allowed and reachable. Parser built and tested. **Adapter is the next task** |
+| **3 — Cleaning & index engine** | ✅ Engine complete | Full pipeline built and verified end-to-end against Supabase. Waiting on data, not on code — `IMPLEMENTATION.md §5c` |
+| **4 — API & dashboard** | ❌ Pending | `/v1/index*` already reads `index_value`; returns empty until data exists |
 | **5 — Docs & validation** | ❌ Pending | |
 
-### The headline: there is no live data collection right now
+### START HERE TOMORROW
 
-`fare_quote` holds **2 rows**, both flagged `exclusion_reason` and excluded from
-any index computation. They are the de-duplicated remains of the 6 rows that
-were there, and they were collected via a fetch robots.txt disallows. **The
-daily series has not started.** Per `IMPLEMENTATION.md §0` that clock is
-wall-clock bound and cannot be backfilled, so this is the single most urgent
-thing in the project.
+**Build the Air India adapter.** Everything it needs is in place: the source is
+confirmed compliant and reachable, the parser is written and tested, and the
+index engine is waiting for input. This is the task that finally starts the
+collection clock — which `IMPLEMENTATION.md §0` notes is wall-clock bound and
+cannot be backfilled.
 
-### What changed in the 2026-09-07 review session
-
-Full write-up in `IMPLEMENTATION.md §5b`. Summary:
-
-1. **Found: IndiGo's tariff PDF is robots.txt-disallowed** (`Disallow: *.pdf`,
-   line 225 of the only `User-Agent: *` group). Phase 0's "CONFIRMED ALLOWED"
-   was wrong. Surfaced the moment `PoliteFetcher` was wired in — the control
-   worked on its first live exercise. **No bypass was built.**
-2. **Fixed: the collector produced zero new information per run.**
-   `collection_ts` was the PDF's issue timestamp, not the fetch time, so every
-   daily run wrote identical rows. Now the real fetch time;
-   `CollectionResult.source_document_ts` carries the document's own timestamp.
-3. **Fixed: `advance_purchase_days` was false on every row** (T+30 label on a
-   T-121 row) — same root cause.
-4. **Fixed: the scheduled task was silently failing.** Battery settings caused
-   outright refusal (`0x800710E0`); 3 of the first 4 days collected nothing.
-   Task corrected and now reproducible via the new `scripts/register_task.ps1`.
-5. **Fixed: compliance module was never connected.** Adapter now fetches through
-   `PoliteFetcher`; `collection_run.robots_checked_at` is finally written.
-6. **Added** `sql/0002` — de-duplication + a unique index at the daily-observation
-   grain, so a same-day re-run is idempotent instead of duplicating.
-7. **Added** `tests/test_tier1_indigo.py` (8 tests) covering the adapter seam
-   that all four defects hid in. 41/41 green, ruff clean.
-
-## 3. Uncommitted work
-
-Everything below is working-tree only, on branch
-`claude/airfare-price-index-india-saqd83` (in sync with origin).
+**One decision to make first (it was left open deliberately, not forgotten).**
+Air India files **base** fares; docs/02 §2 requires the headline on **total
+payable**. The total is constructible from the sheet, but the GST base is
+ambiguous in the source: it says *"5% ... on Base Fare & YR"*, which leaves
+unclear whether the pass-through airport charges (UDF, ASF) sit inside or
+outside that base. For DEL→HYD:
 
 ```
- M IMPLEMENTATION.md                     # §5b post-mortem; Phase 1 status corrected
- M docs/03-architecture.md               # "x 5 windows" -> "x 4 windows"
- M docs/06-recon-log.md                  # IndiGo robots verdict CORRECTED + lesson
- M pyproject.toml                        # + protego; ruff per-file-ignore for B008
- M scripts/run_collection.py             # robots_checked_at, warnings, idempotent insert
- M scripts/sql/0001_init.sql             # stale ~3k/day figure -> ~2.4k/day
- M src/apix/acquisition/base.py          # + robots_checked_at, source_document_ts, warnings, notes
- M src/apix/acquisition/compliance.py    # noqa reason on the deliberate blind except
- M src/apix/acquisition/tier1_indigo.py  # collection_ts fix, PoliteFetcher, staleness alarm
-?? HANDOFF.md
-?? scripts/register_task.ps1             # NEW: reproducible task registration
-?? scripts/sql/0002_fare_quote_dedupe_and_uniqueness.sql   # NEW: applied to Supabase already
-?? src/apix/acquisition/compliance.py    # NEW: the four docs/01 controls
-?? tests/test_compliance.py              # NEW: 18 tests
-?? tests/test_tier1_indigo.py            # NEW: 8 regression tests
+base 1250 + UDF 152 + ASF 236 + RCS 10 + CUTE 160 + YQ 549 + GST 71  ≈  2428
 ```
 
-> [!IMPORTANT]
-> `sql/0002` has **already been applied** to the live Supabase database, and the
-> 2 surviving rows already carry their `exclusion_reason`. The file is committed
-> for the record; do not re-run it expecting it to do work.
+The choice moves the index **level** by roughly 2%. It largely cancels in
+period-to-period relatives, which is what docs/02 §3 says validation compares,
+so it is not fatal either way — but it must be a stated rule, not a silent one.
+
+**Recommendation: follow the document literally** — GST on base + YR (RCS +
+CUTE) only — and record it as an explicit assumption in the adapter docstring
+alongside the alternative reading.
+
+### The data situation
+
+`fare_quote` holds **2 rows**, both flagged `exclusion_reason` and excluded
+from any index computation. `stratum_panel` and `index_value` are empty. **The
+daily series has not started.** No collection has been possible since the
+IndiGo source was found to be disallowed.
+
+### What changed on 2026-09-07 (long session — full detail in IMPLEMENTATION.md §5b/§5c)
+
+1. **Found: IndiGo's tariff PDF is robots.txt-disallowed** (`Disallow: *.pdf`).
+   Phase 0's "CONFIRMED ALLOWED" came from grepping for the path; a rule
+   matching by file extension is invisible to that. Surfaced the moment
+   `PoliteFetcher` was wired in. **No bypass was built.**
+2. **Fixed four silent Phase-1 defects**: frozen `collection_ts` producing
+   duplicate rows, a false `advance_purchase_days`, a scheduled task that was
+   being *refused* on battery power, and a compliance module that nothing
+   called.
+3. **Fixed the secret guard**, which was scanning the working tree instead of
+   staged content while reporting "clean".
+4. **Built Phase 3 in full** — outlier flagging, imputation, Jevons →
+   Lowe/Young, suppression, sensitivity band, 7-day centred average, config
+   hash and vintage stamping. Verified end-to-end against Supabase, then
+   cleaned up.
+5. **Re-verified every carrier's robots verdict** with `scripts/check_robots.py`.
+   **Air India is allowed** — verified by hand as well as by parser.
+6. **Solved the identification problem** on hosts that reset on a custom
+   User-Agent, without going anonymous (see §5 below).
+7. **Built and tested the Air India parser.**
+8. **Evaluated the open-source index libraries** and recorded the
+   build-vs-borrow decision — `docs/08-methodology-sources.md`.
+
+## 3. Git state
+
+Branch `claude/airfare-price-index-india-saqd83`. Working tree clean, 95/95
+tests green, ruff clean.
+
+**7 commits unpushed** (the earlier batch of 10 has already been pushed):
+
+```
+(this handoff update)
+21fec72  Simplify Decimal literals in the Air India parser tests
+13d52db  Add a parser for Air India's tariff sheet
+49c463a  Cite the methodology sources; record the build-vs-borrow decision
+73775ec  Re-verify every carrier robots verdict; Air India unblocks Phase 2
+12f817d  Keep identifying ourselves on hosts that reset on a custom User-Agent
+8ea76a0  Add a repeatable robots.txt check, replacing the grep that got it wrong
+```
+
+To push (pushes are denied at this session's permission layer, so run it
+manually):
+
+```
+git push origin claude/airfare-price-index-india-saqd83
+```
+
+Note `main` does not exist — this branch *is* the repo default (`origin/HEAD`
+points at it), so `git push origin main` fails with `src refspec main does not
+match any`.
 
 ## 4. Codebase map
 
@@ -103,8 +128,9 @@ AirTimeScanner/
 │   ├── 03-architecture.md        # Stack, data model, pipeline stages, API surface, Scrapling rationale
 │   ├── 04-delivery-plan.md       # Original 16-week plan (now compressed to ~1 week solo)
 │   ├── 05-open-questions.md      # 8 sponsor decisions with recommended defaults
-│   ├── 06-recon-log.md           # Phase 0 findings — real URLs, live robots.txt verdicts
-│   └── 07-dgca-outreach-draft.md # Draft letters to DGCA TMU and MoSPI (not sent yet)
+│   ├── 06-recon-log.md           # Recon + the two robots.txt CORRECTIONS
+│   ├── 07-dgca-outreach-draft.md # Draft letters (not sent — cites BPP now)
+│   └── 08-methodology-sources.md # NEW: citations + build-vs-borrow decision
 │
 ├── config/
 │   ├── routes.yaml               # PLACEHOLDER 10-route basket (needs real DGCA data in Phase 2)
@@ -115,6 +141,10 @@ AirTimeScanner/
 │   ├── bootstrap_db.sql          # NOT in use — local Postgres fallback only
 │   ├── sql/0001_init.sql         # Full schema: 6 tables (route, collection_run, selector_confirmation, fare_quote, stratum_panel, index_value)
 │   ├── seed_routes.py            # Loads routes.yaml into DB (idempotent upsert)
+│   ├── check_robots.py           # NEW: robots.txt verdicts via a real parser
+│   ├── register_task.ps1         # NEW: reproducible Task Scheduler registration
+│   ├── run_index.py              # NEW: index entrypoint (--dry-run supported)
+│   ├── sql/0002_...sql           # NEW: dedupe + daily-observation unique index
 │   ├── run_collection.py         # Daily entrypoint — registers adapters, persists quotes (inline mini-NORMALISE)
 │   ├── run_collection.bat        # Task Scheduler wrapper
 │   └── check_secrets.py          # Pre-commit guard (this repo is PUBLIC)
@@ -132,11 +162,16 @@ AirTimeScanner/
 │   ├── acquisition/
 │   │   ├── base.py               # SourceAdapter ABC + CollectionResult
 │   │   ├── compliance.py         # ⚠️ UNCOMMITTED — RobotsGate, RateLimiter, CircuitBreaker, PoliteFetcher
-│   │   ├── pdf_tariff.py         # Shared parser for space-delimited tariff-band PDFs
+│   │   ├── pdf_tariff.py         # IndiGo-shaped tariff PDFs (MINUS SIGN separator)
+│   │   ├── ai_tariff.py          # NEW: Air India sheet — base fares + tax schedule
 │   │   ├── tier1_indigo.py       # REAL working IndiGo adapter (tariff PDF → FareQuote)
 │   │   └── tier1_tariff_stub.py  # Template adapter for the next carrier
-│   ├── index/
-│   │   └── jevons.py             # Elementary Jevons aggregation (pure, deterministic)
+│   ├── index/                    # PHASE 3 — complete
+│   │   ├── jevons.py             # Elementary Jevons (pure, deterministic)
+│   │   ├── config.py             # Methodology params, config_hash, vintage_id
+│   │   ├── relatives.py          # Fixed-base relatives, MAD outliers, imputation
+│   │   ├── aggregate.py          # Lowe/Young, suppression, sensitivity band, 7-day MA
+│   │   └── engine.py             # The only module touching the DB or the clock
 │   └── api/
 │       └── main.py               # FastAPI: /healthz, /v1/index, /v1/index/{series}/latest, /v1/routes, /v1/quotes, /v1/coverage, /v1/methodology, /v1/sdmx/data/{flow}
 │
@@ -157,11 +192,45 @@ AirTimeScanner/
 ### The `fare_class='tier1_tariff_floor'` fork
 IndiGo's tariff sheet gives a **filed floor/ceiling fare band per city-pair**, not a per-departure-date offer, and it's **non-directional** (symmetric). These rows are written to `fare_quote` tagged `fare_class='tier1_tariff_floor'` with `departure_date` conventionally anchored to `collection_ts + 30 days`. **Phase 3's index engine MUST filter these out of the headline series** — they're validation/anchor data, not live index inputs. See `IMPLEMENTATION.md §5a`.
 
+### robots.txt checks go through `scripts/check_robots.py` — never by grep
+This is the lesson that cost Phase 1. A rule can match by file *extension*
+(`Disallow: *.pdf`), which no path search will ever find. The script uses the
+production `RobotsGate`, and keeps IndiGo and Air India Express as
+known-blocked controls so a regression in the tool is visible.
+
 ### The compliance module is wired in — and it immediately blocked the only source
 `tier1_indigo.py` now fetches through `PoliteFetcher.get()`. Every new adapter must do the same; never call `Fetcher.get()` directly from an adapter. The first live run through the gate failed with `RobotsDisallowed` on IndiGo's tariff PDF, which is the correct behaviour, not a bug to work around.
 
 ### `protego` dependency
 `compliance.py` imports `protego` for robots.txt parsing. **Now added to `pyproject.toml`.** Note it was working only because it happened to be present in `.venv`; a clean install would have failed.
+
+### Air India needs its own parser — do not extend pdf_tariff.py
+The two sheets share nothing but the file format: 8 pages vs 68, separate
+Origin/Destination columns vs a `−`-joined string, 13 fare levels vs 21
+buckets, and base fare vs total. `ai_tariff.py` is the Air India parser.
+
+### Air India's four extraction hazards (all pinned by tests)
+1. `DOMESTIC FARES` is an all-caps sub-heading **inside** the economy table —
+   a capitalisation-based section detector ends the block and parses zero rows.
+2. The tax-code cell is **vertically merged**, so `IN` appears on one row of
+   ~36. Classifying UDF by that label captures one airport out of 28.
+3. Multi-word city names (`Delhi North Goa`).
+4. pdfplumber glues long city names to the distance (`Thiruvananthapuram1255`).
+
+### Identification on hosts that reset a custom User-Agent
+Air India's edge resets the connection when an identifying `User-Agent` is
+sent alongside `impersonate="chrome"` — and also when the honest UA is sent
+with no impersonation. It requires a consistent TLS fingerprint. **The fix was
+not to go anonymous**: `PoliteFetcher` retries with RFC 9110 `From` +
+`X-Crawler-Contact` headers, which preserve contactability without
+contradicting the fingerprint. `PoliteFetcher.identified_via` records which
+path was used. The robots gate always runs *before* any transport attempt, so
+this can never become a route around a disallow — there is a test asserting it.
+
+### Absent charges must stay absent, never zero
+Mumbai has no filed departure UDF (only an arrival charge), and a 500km
+distance falls between the filed fuel bands. Both return `None`. Zero would
+assert a measurement nobody made.
 
 ### The MINUS SIGN gotcha
 IndiGo's tariff PDF uses U+2212 MINUS SIGN (`−`), not ASCII hyphen (`-`), as the route separator. `pdf_tariff.py` handles this, but any new carrier adapter parsing similar PDFs must be aware.
@@ -195,53 +264,68 @@ The composite index relies on assumed booking-curve weights (Q1 in open question
 
 ### Quick start
 ```
-.venv\Scripts\python.exe -m pytest -q          # 41 tests, no DB needed
+.venv\Scripts\python.exe -m pytest -q          # 95 tests, no DB needed
 uvicorn apix.api.main:app --reload --app-dir src   # http://127.0.0.1:8000/docs
 python scripts/run_collection.py               # manual collection run
+python scripts/run_index.py --dry-run          # compute the index, write nothing
+python scripts/check_robots.py                 # re-verify every source's robots.txt
 ```
 
 ---
 
 ## 7. What to do next
 
-### The one blocking decision (yours, not code's)
+### 1. Build the Air India adapter  ← the actual next task
 
-There is **no compliant automated Tier-1 source** right now. IndiGo is blocked by
-`Disallow: *.pdf`; Air India Express by `/content/dam`. The realistic options,
-none of which a coding session should pick unilaterally:
+Settle the GST-base question first (see "START HERE TOMORROW" above), then:
 
-1. **Send the DGCA/MoSPI letter** (`docs/07-dgca-outreach-draft.md`, still
-   unsent). It is now the highest-value unblocked action in the project — it
-   asks the regulator for the filings directly, sidestepping the carriers'
-   crawl rules entirely.
-2. **Ask IndiGo for written permission** to fetch the one tariff sheet. A
-   blanket `*.pdf` rule is near-certainly aimed at search-engine indexing, not
-   at a research collector; permission makes that explicit and auditable.
-3. **Look for a non-PDF representation** of the same filing — an HTML tariff
-   page is not covered by `*.pdf`, and non-PDF paths on that host are allowed.
-4. **Treat it as a manual, human-download source** — monthly, by a person, not
-   an automated adapter.
+- New `src/apix/acquisition/tier1_air_india.py`, modelled on
+  `tier1_indigo.py` but using `ai_tariff.py`.
+- Fetch through `PoliteFetcher` — never `Fetcher.get()` directly.
+- URL: `https://www.airindia.com/content/dam/air-india/pdfs/tariff/TARIFF-SHEET-AS-ON-15JUN26.pdf`
+  (robots-allowed, verified; sheet states validity to **30 June 2027**, so
+  unlike IndiGo there is no monthly-republication staleness race).
+- Populate the real decomposition — `base_fare`, `udf`, `asf`, `rcs_levy`,
+  `carrier_charges` (YQ), `gst`, `total_fare`. This is the first source that
+  can support docs/02 §2's base-fare and tax-wedge sub-indices.
+- Tag `fare_class` distinctly from IndiGo's `tier1_tariff_floor`; these are
+  filed *base* fares, and the index engine's exclusion filter keys on that tag.
+- Extend `CITY_TO_IATA` to cover the basket (the parser skips and *counts*
+  unresolvable cities — watch that count).
+- Register it in `scripts/run_collection.py` alongside the IndiGo adapter.
 
-### Before any Phase 2 code
+The IndiGo adapter stays registered and will keep failing cleanly on the
+robots disallow. That is intentional: its daily robots.txt fetch is the
+cheapest way to notice if the `*.pdf` rule ever changes.
 
-- **Re-check Air India, Akasa and SpiceJet robots.txt with `protego`**, not
-  substring search. Their current verdicts were reached the way IndiGo's wrong
-  one was, so treat all three as unverified. This is cheap and should happen
-  first — it may reveal the same `*.pdf` pattern industry-wide, which would
-  change the whole acquisition strategy.
+### 2. Then: real DGCA route basket
+
+`route.dgca_pax_weight` is NULL for all 10 placeholder routes, so the upper
+level is currently **equal-weighted** — not the Lowe/Young revenue-share index
+docs/02 §8 specifies. The engine warns about this on every run. Needs DGCA
+passenger-traffic data; depends on no carrier access at all.
+
+### 3. Still outstanding, unchanged
+
+- **Send the DGCA/MoSPI letter** — `docs/07-dgca-outreach-draft.md`. Now opens
+  by citing the MIT Billion Prices Project, which is a materially stronger
+  framing to a regulator.
 - **Enable the Task Scheduler operational log** (needs an elevated shell):
-  `wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true`. Without it
-  a scheduled-task failure leaves no diagnosable trace — which is exactly how
-  three missed collection days went unnoticed.
+  `wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true`
+- **Probe Akasa** — its `robots.txt` returns 403, which is genuinely ambiguous
+  (absent, or an edge refusing bots). Recorded as UNVERIFIED, not allowed.
+- **Locate SpiceJet's tariff URL** — host is open, but no sheet has been found.
 
-### Work that is genuinely unblocked
+### Known gaps in Phase 3, deliberately deferred
 
-**Phase 3 (cleaning & index engine)** does not need live collection to be
-built — outlier flagging, imputation, Lowe/Young upper-level aggregation and
-vintage stamping can all be developed and tested against fixtures, the same way
-`jevons.py` already is. If the acquisition decision takes days to resolve, this
-is the productive place to spend them. Remember the `fare_class` filter from
-§5a: `tier1_tariff_floor` rows must be excluded from the headline series.
+- Only **daily** frequency is emitted; `index_value` allows weekly/monthly.
+- **Monthly GEKS-Jevons is not built.** When it is: port from IndexNumR and
+  validate against its published vignette — do not hand-write it. See
+  `docs/08-methodology-sources.md`.
+- The **DOW-adjusted variant** (docs/02 §5 recommends three mitigations; the
+  7-day centred average is one).
+- Base-fare / tax-wedge **sub-indices** — now possible for the first time,
+  once Air India data is flowing.
 
 ## 8. Open questions status (from `docs/05-open-questions.md`)
 
@@ -285,6 +369,8 @@ is the productive place to spend them. Remember the `fare_class` filter from
 |---|---|---|
 | `test_jevons.py` | 9 | Golden-fixture Jevons tests (ILO-style worked examples) |
 | `test_pdf_tariff.py` | 6 | Fixture-based parser tests (section tracking, NA handling, multi-section guard) |
-| `test_compliance.py` | 18 | Robots enforcement, rate limiting, circuit breaking, composed PoliteFetcher |
+| `test_compliance.py` | 25 | Robots, rate limiting, circuit breaking, PoliteFetcher, identification fallback |
+| `test_index_engine.py` | 31 | Phase 3: relatives, outliers, imputation, aggregation, suppression, bands, determinism |
+| `test_ai_tariff.py` | 16 | Air India parser: city splitting, section bounds, merged tax cells, fuel bands |
 | `test_tier1_indigo.py` | 8 | Adapter seam: collection_ts is fetch time, staleness warning, robots timestamp propagation, PoliteFetcher routing |
-| **Total** | **41** | All pass in ~1s, no DB needed |
+| **Total** | **95** | All pass in ~2s, no DB needed |
