@@ -92,6 +92,27 @@ class FareQuoteRow(Base):
     )
 
 
+class StratumPanel(Base):
+    """One elementary aggregate: the Jevons relative for one stratum on one day.
+
+    The table has existed since 0001_init.sql; this model was missing, so the
+    index engine had no typed surface to write through. Mirrors the SQL 1:1,
+    including its UNIQUE (date, route_id, advance_purchase_days) -- the panel is
+    recomputable, so a rerun upserts rather than appending a second opinion.
+    """
+
+    __tablename__ = "stratum_panel"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    date: Mapped[date] = mapped_column(Date, nullable=False)
+    route_id: Mapped[int] = mapped_column(Integer, ForeignKey("route.route_id"))
+    advance_purchase_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    jevons_relative: Mapped[float | None] = mapped_column(Numeric(12, 8))
+    n_observed: Mapped[int] = mapped_column(Integer, default=0)
+    n_imputed: Mapped[int] = mapped_column(Integer, default=0)
+    coverage_ratio: Mapped[float | None] = mapped_column(Numeric(5, 4))
+
+
 class IndexValue(Base):
     __tablename__ = "index_value"
 
