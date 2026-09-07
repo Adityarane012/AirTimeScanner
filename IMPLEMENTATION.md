@@ -31,7 +31,7 @@ not a silent gap:
 |---|---|---|
 | Prefect 3 orchestration | A plain Python script (`scripts/run_collection.py`) run via Windows Task Scheduler | At one run/day, an orchestrator adds ops overhead with no benefit yet. Adapter logic is orchestrator-agnostic, so swapping in Prefect later touches one script, not the adapters |
 | MinIO / S3 | Local content-hashed filesystem store (`apix.storage.object_store`) | Same guarantee (immutable, content-addressed); no Docker available on this machine anyway. One-file swap to real S3 later |
-| PostgreSQL + **TimescaleDB** | Plain **Postgres 17, Supabase-hosted** (`apix-airfare-index` project, `ap-south-1`, free tier) | docs/03 itself says "no part of this project is a scale problem" at ~3k rows/day. A hypertable buys nothing yet. Supabase over the local PostgreSQL 18 install: no local admin/superuser password handling needed, provisioned entirely via tool calls |
+| PostgreSQL + **TimescaleDB** | Plain **Postgres 17, Supabase-hosted** (`apix-airfare-index` project, `ap-south-1`, free tier) | docs/03 itself says "no part of this project is a scale problem" at ~2.4k rows/day. A hypertable buys nothing yet. Supabase over the local PostgreSQL 18 install: no local admin/superuser password handling needed, provisioned entirely via tool calls |
 | Parquet + DuckDB analytics layer | Deferred; pandas directly against Postgres | Not needed until back-testing needs to iterate faster than SQL allows |
 | dbt | Deferred; SQL written directly in `scripts/sql/` | Revisit once there's a silver/gold split worth tracking lineage on |
 | Next.js + ECharts dashboard | Streamlit only for week 1 | One surface, fast to build; swap/add Next.js once the API is stable |
@@ -173,7 +173,7 @@ docs/04 but sized for one person. Numbers assume you start today.
 | Phase | Days | Goal | Definition of done |
 |---|---|---|---|
 | **0 — Setup & recon** | 0.5–1 | ✅ **Done and signed off** — see `docs/06-recon-log.md`'s "Phase 0 sign-off" section: real tariff-sheet URLs for 4/5 carriers, IndiGo fully live-verified (robots.txt, T&C, actual fetch), one real conflict found and left unresolved rather than routed around (Air India Express), Q4/Q6/Q7 addressed (Q4 outreach drafted in `docs/07-dgca-outreach-draft.md`, not yet sent — that's yours to do) | See `docs/06-recon-log.md` |
-| **1 — Vertical slice** | 1–2 | ✅ **Done.** Real IndiGo adapter (`tier1_indigo.py` + `pdf_tariff.py`): fetches the live tariff PDF, parses its "ONE WAY ECONOMY FARES" section (confirmed via direct inspection: 68 pages, MINUS-SIGN route separator, multiple fare-table sections that must be kept separate, non-directional bands), writes real rows to Supabase. Task Scheduler entry (`APIx-DailyCollection`, daily 06:00, via `run_collection.bat`) registered and manually triggered once to confirm the actual scheduled path works, not just the direct invocation | **Verified**: 4 real rows in `fare_quote` (2 via direct run, 2 via the Task Scheduler path), `observation_status='observed'`, valid `raw_payload_hash`, `fare_class='tier1_tariff_floor'` correctly distinguishing this from a live headline quote (see the honesty note in `tier1_indigo.py`'s docstring — this is a filed floor band, not a per-date offer). 15/15 tests green (6 new, parser-only, fixture-based) |
+| **1 — Vertical slice** | 1–2 | ⚠️ **Built, then blocked — see §5b.** The adapter (`tier1_indigo.py` + `pdf_tariff.py`) is real and works: it fetches, parses the "ONE WAY ECONOMY FARES" section (68 pages, MINUS-SIGN separator, multi-section guard) and writes to Supabase. But wiring the compliance module in revealed the source is **robots.txt-disallowed** (`Disallow: *.pdf`), so it now correctly refuses to collect. Three further defects found in the same review are fixed (§5b) | **Not met.** The DoD claimed "4 real rows" — those rows were 3 duplicate copies of 2 observations, caused by a frozen `collection_ts`, and were collected via a disallowed fetch. They are now de-duplicated and flagged `exclusion_reason`. **The live daily series has not actually started** — see §0 on why that clock matters. 41/41 tests green |
 | **2 — Multi-source** | 1–2 | Remaining Tier-1 adapters (all 5 carriers, or as many as have reachable tariff sheets); real ~50-route basket loaded from actual DGCA data; NORMALISE stage (fare decomposition, de-dup across sources); **resolve the Tier-1-vs-Tier-3 semantics question flagged below before this phase's index-relevant work** | ≥3 sources landing daily; `route` table has the real weighted basket; a NORMALISE unit test per fare-component rule |
 | **3 — Cleaning & index engine** | 1–2 | Outlier flagging (MAD, within-stratum, log relatives), stratum-mean imputation, Jevons elementary (done) → Lowe/Young upper level with `booking_curve.yaml`, `config_hash` + vintage stamping, coverage-floor suppression | A `stratum_panel` and `index_value` row computed end-to-end from real collected data; recompute is bit-identical on a second run; sensitivity band present on every composite value |
 | **4 — API & dashboard** | 1 | Wire `/v1/index*` to real data (already stubbed); Streamlit dashboard: trend line, coverage panel, at minimum | `GET /v1/index?series=...` returns real numbers; Streamlit page loads and shows the trend and a coverage/suppression indicator |
@@ -219,6 +219,76 @@ Tier-1 from `fare_quote` entirely — that's a reasonable alternative and a
 schema change, not a big one. Current choice was made to keep Phase 1
 moving without a schema migration; revisit before Phase 3 if it doesn't sit
 right.
+
+## 5b. Phase 1 post-mortem — what a real review found (2026-09-07)
+
+Phase 0 and Phase 1 were both signed off as done. A full assessment of the
+running system found one blocker and four defects, **none of which were
+recorded anywhere in this plan**. Written up here because every one of them was
+silent — the tests passed, the script exited zero, and the database filled with
+rows that looked fine.
+
+### Blocker — the IndiGo source is robots.txt-disallowed
+
+`www.goindigo.in/robots.txt` line 225, under its only `User-Agent: *` group, is
+`Disallow: *.pdf`. That covers the tariff sheet. The Phase 0 verdict of
+"CONFIRMED ALLOWED" came from grepping the file for the *path* (`s6web`) and
+finding nothing; a rule matching by *file extension* is invisible to a path
+search. Full account and the transferable lesson: `docs/06-recon-log.md`,
+"Correction" section.
+
+**Consequence: Tier 1 has no compliant automated source right now.** IndiGo is
+blocked by `*.pdf`; Air India Express was already blocked by `/content/dam`.
+Air India, Akasa and SpiceJet were assessed the same unreliable way and must be
+re-checked with a real parser before any adapter is built against them. This
+changes what Phase 2 is, and is a decision for the operator, not for code — see
+the options listed in the recon-log correction. `docs/07-dgca-outreach-draft.md`
+just became the most valuable unblocked item in the project.
+
+### Defect 1 — the collector produced zero new information per run
+
+`collection_ts` was parsed from the tariff PDF's own issue timestamp instead of
+the fetch time. The sheet is republished ~monthly, so every daily run wrote rows
+identical in every meaningful column. Six rows in `fare_quote` were three exact
+copies of two observations. **Fixed**: `collection_ts` is now the real fetch
+time; the document's timestamp is carried separately as
+`CollectionResult.source_document_ts`.
+
+### Defect 2 — `advance_purchase_days` was false on every row
+
+A consequence of Defect 1: `departure_date` derived from the frozen timestamp,
+so rows written in September claimed a June departure — labelled T+30 while
+actually T-121. **Fixed** by the same change.
+
+### Defect 3 — the scheduled task was silently failing
+
+`DisallowStartIfOnBatteries=True` means a laptop on battery at 06:00 has the run
+*refused* (`LastTaskResult 0x800710E0`), and `StartWhenAvailable=False` means a
+run missed while the machine was asleep is never made up. Three of the first
+four scheduled days produced nothing at all, and the failures were invisible
+because nothing was written and the Task Scheduler operational log is disabled.
+**Fixed**: settings corrected and, more importantly, made reproducible —
+`scripts/register_task.ps1` (which `run_collection.bat` had referenced since day
+one but which never existed) now defines the task in version control.
+
+### Defect 4 — the compliance posture was documented but not connected
+
+`compliance.py` implemented all four docs/01 controls and was fully unit-tested,
+but no adapter called it — `tier1_indigo.py` used `Fetcher.get()` directly.
+`collection_run.robots_checked_at` had existed since the first migration with
+nothing ever writing to it. **Fixed**: the adapter fetches through
+`PoliteFetcher`, and the robots check timestamp is persisted. Connecting it is
+what exposed the blocker above, on the first run.
+
+### The pattern worth naming
+
+Four of these five passed a green test suite. The tests covered pure functions
+(the Jevons maths, the PDF parser) and never the seams between them — the
+adapter's own timestamp handling, whether persistence was reachable, whether the
+compliance module was called by anything. `tests/test_tier1_indigo.py` now
+covers that seam. **A phase is not done because its tests pass; it is done when
+its output has been inspected.** Neither the duplicate rows nor the disallowed
+fetch would have survived one look at the actual table.
 
 ## 6. Open questions — decisions to make now, not defer
 
