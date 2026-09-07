@@ -2,6 +2,12 @@
 coverage-floor suppression from docs/01 and the mandatory sensitivity band from
 docs/02 §4.
 
+Formula provenance (ILO/IMF/OECD CPI Manual 2020) and why these are
+implemented here rather than imported from an index-number library:
+docs/08-methodology-sources.md. Note its one carve-out — the monthly
+GEKS-Jevons required by §8 must be ported from IndexNumR and validated
+against its published vignette, not hand-written.
+
 Pure functions over the panel produced by relatives.py. The two levels are kept
 separate because they answer different questions and fail differently:
 elementary aggregation is unweighted within a stratum (Jevons, carriers as

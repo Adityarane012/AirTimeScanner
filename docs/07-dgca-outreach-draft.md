@@ -23,9 +23,12 @@ Tariff Monitoring Unit's route coverage
 Dear [Sir/Madam / named contact if known],
 
 I'm building an independent, publicly-documented daily Airfare Price Index
-(APIx) for Indian domestic routes, using DGCA-mandated public tariff sheet
+(APIx) for Indian domestic routes, following the approach of the MIT Billion
+Prices Project (Cavallo & Rigobon, *Journal of Economic Perspectives* 30(2),
+2016) — using high-frequency collected prices to complement official
+statistics. Its primary data source is DGCA-mandated public tariff sheet
 disclosures (Rule 135(2), Aircraft Rules 1937 / DGCA Air Transport Circular
-02 of 2010) as its primary data source — the same disclosure mechanism I
+02 of 2010) — the same disclosure mechanism I
 understand the Tariff Monitoring Unit already uses for its own monthly
 monitoring of fares across roughly 78 routes.
 

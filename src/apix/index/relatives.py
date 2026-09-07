@@ -1,6 +1,11 @@
 """Price relatives, outlier flagging and imputation — docs/02-methodology.md
 §6, §7, §8.
 
+Sources for the rules implemented here, and the build-vs-borrow decision
+behind implementing rather than importing them: docs/08-methodology-sources.md.
+The outlier rule is Iglewicz & Hoaglin (1993), including its documented
+fallback for the degenerate-MAD case.
+
 Pure and deterministic, like jevons.py: no DB, no clock, no config file
 reading. The engine supplies observations, this module returns the panel. That
 keeps the statistical rules testable against hand-worked fixtures, which is the
