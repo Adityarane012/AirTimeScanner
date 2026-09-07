@@ -195,3 +195,133 @@ def test_user_agent_is_passed_through_to_the_transport():
     pf.get("https://x.example/t.pdf", user_agent="APIx-Collector/0.1 (+mailto:x@y.z)")
     assert "APIx-Collector" in seen["ua"]
     assert "mailto:" in seen["ua"]
+
+
+# ---------------------------------------------------------------------------
+# Identification under a hostile TLS fingerprint check
+#
+# Verified live on airindia.com: the identifying User-Agent resets the
+# connection every time, dropping it succeeds every time, and a plain
+# non-impersonated request with the honest UA also resets. The edge requires a
+# consistent fingerprint. The response must be to keep identifying ourselves by
+# another standards-defined route, never to go anonymous.
+# ---------------------------------------------------------------------------
+
+from apix.acquisition import compliance as _compliance
+from apix.acquisition.compliance import (
+    _is_fingerprint_reset,
+    identifying_headers,
+)
+
+UA = "APIx-Collector/0.1 (+mailto:ops@example.invalid; research project)"
+
+
+def test_identifying_headers_carry_contact_even_without_a_user_agent():
+    """docs/01 asks for an identified, contactable agent. Contactability is the
+    substance of that, and it must survive dropping the UA header."""
+    full = identifying_headers(UA, with_user_agent=True)
+    reduced = identifying_headers(UA, with_user_agent=False)
+
+    assert full["User-Agent"] == UA
+    assert "User-Agent" not in reduced
+
+    # RFC 9110 From: the mailbox of the human controlling the agent.
+    assert full["From"] == "ops@example.invalid"
+    assert reduced["From"] == "ops@example.invalid"
+    assert reduced["X-Crawler-Contact"] == UA
+
+
+def test_contact_email_has_a_single_source_of_truth():
+    """Parsed out of the configured UA so the address cannot drift between the
+    User-Agent and From headers."""
+    headers = identifying_headers("APIx/9 (+mailto:someone@else.invalid)", with_user_agent=True)
+    assert headers["From"] == "someone@else.invalid"
+
+
+def test_headers_omit_from_when_the_agent_declares_no_mailbox():
+    headers = identifying_headers("APIx-Collector/0.1", with_user_agent=True)
+    assert "From" not in headers
+    assert headers["X-Crawler-Contact"] == "APIx-Collector/0.1"
+
+
+def test_fingerprint_reset_is_recognised():
+    reset = Exception("Failed to perform, curl: (92) HTTP/2 stream 5 reset by server (INTERNAL_ERROR)")
+    assert _is_fingerprint_reset(reset) is True
+    assert _is_fingerprint_reset(Exception("404 Not Found")) is False
+
+
+def test_polite_fetcher_retries_without_the_user_agent_on_a_fingerprint_reset(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        status = 200
+        body = b"%PDF-fake"
+
+    class FakeFetcher:
+        @staticmethod
+        def get(url, **kwargs):
+            headers = kwargs.get("headers", {})
+            calls.append(headers)
+            if "User-Agent" in headers:
+                raise RuntimeError("Failed to perform, curl: (92) HTTP/2 stream 5 reset by server")
+            return FakeResponse()
+
+    import scrapling.fetchers
+
+    monkeypatch.setattr(scrapling.fetchers, "Fetcher", FakeFetcher)
+
+    fetcher = _compliance.PoliteFetcher(
+        robots=_compliance.RobotsGate(fetcher=lambda _u: "User-agent: *\nDisallow: /nope\n"),
+        limiter=_compliance.RateLimiter(min_interval_s=0, jitter_s=0),
+    )
+    result = fetcher.get("https://host.invalid/tariff.pdf", UA)
+
+    assert result.status == 200
+    assert len(calls) == 2, "should try the identifying UA first, then fall back"
+    assert "User-Agent" in calls[0]
+    assert "User-Agent" not in calls[1]
+    # The fallback is still identified -- that is the whole point.
+    assert calls[1]["From"] == "ops@example.invalid"
+    assert fetcher.identified_via == "from-header"
+
+
+def test_a_non_fingerprint_error_is_not_retried_or_swallowed(monkeypatch):
+    class FakeFetcher:
+        @staticmethod
+        def get(url, **kwargs):
+            raise RuntimeError("500 Internal Server Error")
+
+    import scrapling.fetchers
+
+    monkeypatch.setattr(scrapling.fetchers, "Fetcher", FakeFetcher)
+
+    fetcher = _compliance.PoliteFetcher(
+        robots=_compliance.RobotsGate(fetcher=lambda _u: "User-agent: *\n"),
+        limiter=_compliance.RateLimiter(min_interval_s=0, jitter_s=0),
+    )
+    with pytest.raises(RuntimeError, match="500"):
+        fetcher.get("https://host.invalid/x.pdf", UA)
+
+
+def test_the_fallback_never_reaches_a_disallowed_url(monkeypatch):
+    """The robots gate runs before any transport attempt, so the fallback
+    cannot become a way around a disallow."""
+    attempted = []
+
+    class FakeFetcher:
+        @staticmethod
+        def get(url, **kwargs):
+            attempted.append(url)
+            raise AssertionError("transport must never be reached for a disallowed URL")
+
+    import scrapling.fetchers
+
+    monkeypatch.setattr(scrapling.fetchers, "Fetcher", FakeFetcher)
+
+    fetcher = _compliance.PoliteFetcher(
+        robots=_compliance.RobotsGate(fetcher=lambda _u: "User-agent: *\nDisallow: *.pdf\n"),
+        limiter=_compliance.RateLimiter(min_interval_s=0, jitter_s=0),
+    )
+    with pytest.raises(_compliance.RobotsDisallowed):
+        fetcher.get("https://host.invalid/tariff.pdf", UA)
+    assert attempted == []
