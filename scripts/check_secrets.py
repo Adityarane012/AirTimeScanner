@@ -76,9 +76,26 @@ def scan_text(path: str, text: str) -> list[str]:
 
 
 def _git(*args: str) -> str:
-    return subprocess.run(
-        ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=False
-    ).stdout
+    # encoding is explicit and errors are replaced, never raised. With bare
+    # text=True, Python decodes using the locale encoding -- cp1252 on this
+    # machine -- and any file git emits containing a character outside it (an
+    # em dash is enough) killed the subprocess reader thread. `.stdout` then
+    # came back as None, the caller fell through to its working-tree fallback,
+    # and the guard scanned the WORKING TREE instead of the STAGED content
+    # while still reporting "clean". A secret staged and then edited out of the
+    # working copy would not have been caught.
+    return (
+        subprocess.run(
+            ["git", *args],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        ).stdout
+        or ""
+    )
 
 
 def staged_files() -> list[str]:
