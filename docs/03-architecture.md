@@ -5,9 +5,9 @@
 Worth establishing up front, because it changes what the hard problems are.
 
 ```
-50 city-pairs × 2 directions × 5 windows × ~6 carriers ≈ 3,000 headline quote-slots/day
-With full fare ladders retained:                        ≈ 15,000–30,000 rows/day
-Annual:                                                 ≈ 5–11 million rows/year
+50 city-pairs × 2 directions × 4 windows × ~6 carriers ≈ 2,400 headline quote-slots/day
+With full fare ladders retained:                        ≈ 12,000–24,000 rows/day
+Annual:                                                 ≈ 4–9 million rows/year
 ```
 
 This is a small dataset. It fits comfortably in a single PostgreSQL instance for
@@ -50,10 +50,10 @@ three reasons:
   | Tier 3 — booking engines, hostile | `StealthyFetcher` → `DynamicFetcher` | Escalate only as far as the source requires |
 
 - **This project does not crawl.** The route basket is fixed and enumerated from
-  config (~50 pairs × 2 directions × 5 windows); no link discovery, no frontier,
+  config (~50 pairs × 2 directions × 4 windows); no link discovery, no frontier,
   no URL dedup at scale. Scrapy's and Crawlee's core value — crawling machinery —
   solves a problem this project doesn't have. Scrapling's request volume (a few
-  hundred to ~3,000 fetches/day) plays to its strength instead.
+  hundred to ~2,400 fetches/day) plays to its strength instead.
 
 - **Adaptive selectors directly target risk #7 in the delivery plan** (parser rot
   from site redesigns) — see the quarantine rule below, which is the one governing

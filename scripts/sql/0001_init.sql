@@ -2,7 +2,7 @@
 --
 -- Plain PostgreSQL for the prototype (no TimescaleDB — see IMPLEMENTATION.md
 -- "What's cut for the compressed timeline"). At the project's actual scale
--- (~3k headline rows/day, 5-11M rows/year) a btree index on collection_ts is
+-- (~2.4k headline rows/day, 4-9M rows/year) a btree index on collection_ts is
 -- sufficient; migrate to a hypertable later only if evidence says it's needed.
 
 CREATE TABLE IF NOT EXISTS route (
