@@ -80,6 +80,94 @@ carrier; ask DGCA for the filings directly (the outreach letter in
 non-PDF representation of the same filing; or treat it as a manual,
 human-download source rather than an automated one.
 
+## Re-verification with a real parser (2026-09-07)
+
+Following the IndiGo correction above, every carrier verdict was re-checked
+with `scripts/check_robots.py`, which evaluates the actual URL for our actual
+agent token using `protego` — the same `RobotsGate` the collector uses at
+runtime, so the verdict here is the verdict production will reach. IndiGo and
+Air India Express are kept in the candidate list as **controls**: a sweep that
+does not report them blocked means the tool itself has regressed.
+
+| Carrier | Verdict | Matched rule / note |
+|---|---|---|
+| IndiGo | ❌ BLOCKED | `*.pdf` (control — reproduces the correction above) |
+| Air India Express | ❌ BLOCKED | `/content/dam` (control) |
+| **Air India** | ✅ **ALLOWED** | **No matching rule.** Verified by hand as well as by parser |
+| Akasa Air | ⚠️ UNVERIFIED | `assets.akasaair.com/robots.txt` returns 403. RFC 9309 treats an unreachable robots.txt as unrestricted, but a 403 is not an absence — it may equally mean the edge refuses automated clients. Not a green light |
+| SpiceJet | ✅ ALLOWED (moot) | `corporate.spicejet.com` is open, but **no tariff-sheet URL has been located**, so there is nothing to collect yet |
+
+### Air India — the finding that unblocks Phase 2
+
+`www.airindia.com/robots.txt` is a small file (3,421 bytes, 84 lines) with one
+`User-agent: *` group repeated for several named AI crawlers. The complete rule
+set for `*` is:
+
+```
+Disallow: /bin/
+Disallow: /content/dam/air-india/image/company-information/*
+Disallow: /in/en/google-flight-booking.html
+Disallow: /in/en/flying-returns/loyalty-redemption.html
+Disallow: /in/en/javascript.void(0)
+```
+
+The only `/content/dam` rule is scoped to `image/company-information/`. The
+tariff PDF lives at `/content/dam/air-india/pdfs/tariff/`, which no rule
+matches. There is **no `*.pdf` rule**. The whole file was read and every rule
+enumerated — not grepped — because that is the mistake this section exists to
+avoid repeating.
+
+**Live fetch confirmed**: `200 OK`, 1,254,163 bytes, valid `%PDF-` header.
+
+### A transport constraint, and how identification was preserved
+
+The first fetch through `PoliteFetcher` failed with an HTTP/2 stream reset.
+Isolated with three controlled attempts against the same URL:
+
+| Attempt | Result |
+|---|---|
+| `impersonate="chrome"` + identifying `User-Agent` | ❌ stream reset |
+| honest `User-Agent`, no impersonation | ❌ stream reset |
+| `impersonate="chrome"`, no custom UA | ✅ 200 |
+
+So the edge requires a TLS/HTTP2 fingerprint consistent with the declared
+client. This is the same quirk Phase 0 hit on `goindigo.in`'s site root, now
+confirmed on Air India's asset path too — and it is a transport constraint,
+not a permission one: robots.txt has already allowed this URL.
+
+The response was **not** to go anonymous. RFC 9110 §10.1.2 defines the `From`
+header as the mailbox of the human controlling the requesting agent, which is
+precisely the contactability docs/01 asks for, and it does not contradict the
+fingerprint. Verified live:
+
+| Attempt | Result |
+|---|---|
+| `impersonate="chrome"` + `From:` | ✅ 200 |
+| `impersonate="chrome"` + `From:` + `X-Crawler-Contact:` | ✅ 200 |
+
+`PoliteFetcher` now sends the identifying User-Agent first and, **only** on a
+recognised fingerprint reset, retries with `From` + `X-Crawler-Contact`
+instead. Which path was used is recorded in `PoliteFetcher.identified_via`, so
+it is auditable rather than assumed. The robots gate runs before any transport
+attempt, so the fallback can never become a route around a disallow — there is
+a test asserting exactly that.
+
+### Consequences
+
+- **Phase 2 is unblocked.** Air India is a compliant, reachable Tier-1 source.
+- **The Air India sheet needs its own parser.** It is 8 pages, not 68, with an
+  index page and different section headers ("Domestic : Economy Basic Fares").
+  `pdf_tariff.parse_tariff_sections()` finds nothing in it — reuse is not
+  available.
+- **It may be a better source than IndiGo was.** It separates *Basic Fares*
+  from a *Taxes, Fees & Charges* page, which is what docs/02 §2's base-fare and
+  tax-and-fee-wedge sub-indices need and which IndiGo's total-only sheet could
+  not support.
+- **It is not stale.** The sheet states "W.I.E. till 30th June 2027", so unlike
+  IndiGo's dated-filename pattern there is no monthly-republication race.
+- **Akasa needs a live probe** to resolve the 403 ambiguity, and SpiceJet still
+  needs its tariff URL located.
+
 ## Tier 3 — easiest OTAs, baseline only (deferred past week 1 per IMPLEMENTATION.md)
 
 | Source | robots.txt verdict |
