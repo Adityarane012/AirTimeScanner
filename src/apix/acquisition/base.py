@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from apix.contracts.fare_quote import FareQuote
 
@@ -19,6 +20,19 @@ class CollectionResult:
     quotes: list[FareQuote] = field(default_factory=list)
     selector_relocated: bool = False
     error: str | None = None
+    # docs/01 requires robots.txt to be re-checked on every run; recording
+    # *when* is what makes that auditable rather than merely claimed. Persisted
+    # to collection_run.robots_checked_at.
+    robots_checked_at: datetime | None = None
+    # Publication timestamp of the source document itself, where the source
+    # states one. Deliberately NOT the same thing as a quote's collection_ts
+    # (see the Phase-1 defect note in tier1_indigo.py): a monthly-updated
+    # tariff sheet has one issue date and many collection dates.
+    source_document_ts: datetime | None = None
+    # Non-fatal conditions worth a human's attention — a stale source document,
+    # a route missing from the filing. Persisted to collection_run.notes so a
+    # degraded run is visible without being silently counted as a clean one.
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def status(self) -> str:
@@ -26,7 +40,19 @@ class CollectionResult:
             return "failed"
         if self.selector_relocated:
             return "partial"  # quarantined — see the adaptive-selector rule
+        if self.warnings:
+            return "partial"
         return "succeeded"
+
+    @property
+    def notes(self) -> str | None:
+        """What goes in collection_run.notes: the error if it failed, else any
+        warnings, else nothing."""
+        if self.error:
+            return self.error
+        if self.warnings:
+            return "; ".join(self.warnings)
+        return None
 
 
 class SourceAdapter(ABC):

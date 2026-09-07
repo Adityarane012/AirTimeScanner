@@ -24,28 +24,36 @@ from __future__ import annotations
 
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from sqlalchemy import select  # noqa: E402
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from apix.acquisition.base import SourceAdapter  # noqa: E402
-from apix.acquisition.tier1_indigo import Tier1IndiGoTariffAdapter  # noqa: E402
-from apix.db.engine import get_session  # noqa: E402
-from apix.db.models import CollectionRun, FareQuoteRow, Route  # noqa: E402
+from apix.acquisition.base import SourceAdapter
+from apix.acquisition.tier1_indigo import Tier1IndiGoTariffAdapter
+from apix.db.engine import get_session
+from apix.db.models import CollectionRun, FareQuoteRow, Route
 
 ADAPTERS: list[SourceAdapter] = [Tier1IndiGoTariffAdapter()]
 
 
-def _persist_quotes(session, quotes, run_id) -> int:
+def _persist_quotes(session, quotes, run_id) -> tuple[int, int]:
     """Resolve each FareQuote's (origin, destination) to a route_id and write
     a fare_quote row. Skips (with a printed warning, not a silent drop) any
     quote whose route isn't in the `route` table yet -- that's a real
     Phase 2 gap (route basket too narrow), not something to paper over.
+
+    Writes go through ON CONFLICT DO NOTHING against the daily-observation
+    unique index added in sql/0002. That makes a same-day re-run idempotent
+    instead of duplicating -- re-running the collector after a partial
+    failure is a normal operator action, and it should not corrupt the
+    series. Returns (written, skipped_as_duplicate).
     """
     written = 0
+    duplicates = 0
     for q in quotes:
         route = session.execute(
             select(Route).where(Route.origin == q.origin, Route.destination == q.destination)
@@ -53,8 +61,9 @@ def _persist_quotes(session, quotes, run_id) -> int:
         if route is None:
             print(f"  SKIPPED {q.origin}->{q.destination}: not in route table yet")
             continue
-        session.add(
-            FareQuoteRow(
+        stmt = (
+            pg_insert(FareQuoteRow)
+            .values(
                 quote_id=uuid.uuid4(),
                 run_id=run_id,
                 source=q.source,
@@ -69,9 +78,15 @@ def _persist_quotes(session, quotes, run_id) -> int:
                 observation_status=q.observation_status,
                 raw_payload_hash=q.raw_payload_hash,
             )
+            .on_conflict_do_nothing()
+            .returning(FareQuoteRow.quote_id)
         )
-        written += 1
-    return written
+        if session.execute(stmt).scalar_one_or_none() is None:
+            duplicates += 1
+            print(f"  DUPLICATE {q.origin}->{q.destination}: already collected today, not rewritten")
+        else:
+            written += 1
+    return written, duplicates
 
 
 def main() -> None:
@@ -81,6 +96,7 @@ def main() -> None:
         return
 
     for adapter in ADAPTERS:
+        started_at = datetime.now(UTC)
         result = adapter.run()
         run_id = uuid.uuid4()
 
@@ -89,19 +105,28 @@ def main() -> None:
                 CollectionRun(
                     run_id=run_id,
                     source=result.source,
-                    started_at=datetime.now(timezone.utc),
-                    finished_at=datetime.now(timezone.utc),
+                    started_at=started_at,
+                    finished_at=datetime.now(UTC),
                     status=result.status,
+                    # docs/01's "robots.txt re-checked on every run" is only
+                    # auditable if the check timestamp is actually persisted.
+                    # The column existed from day one and nothing wrote it.
+                    robots_checked_at=result.robots_checked_at,
                     config_hash=result.config_hash,
                     selector_relocated=result.selector_relocated,
-                    notes=result.error,
+                    notes=result.notes,
                 )
             )
             session.flush()  # run row must exist before fare_quote FKs reference it
-            written = _persist_quotes(session, result.quotes, run_id)
+            written, duplicates = _persist_quotes(session, result.quotes, run_id)
             session.commit()
 
-        print(f"{result.source}: {result.status} ({len(result.quotes)} quotes parsed, {written} written)")
+        summary = f"{len(result.quotes)} quotes parsed, {written} written"
+        if duplicates:
+            summary += f", {duplicates} duplicate"
+        print(f"{result.source}: {result.status} ({summary})")
+        for warning in result.warnings:
+            print(f"  WARNING: {warning}")
 
 
 if __name__ == "__main__":
