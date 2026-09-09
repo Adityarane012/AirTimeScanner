@@ -107,7 +107,7 @@ rediscovered mid-Phase-1:
 | Playwright/Camoufox **browser binaries** | ⬜ not installed, **not needed yet** — only required once a Tier-3 target forces `StealthyFetcher`/`DynamicFetcher`; run `playwright install chromium` (or Scrapling's own installer) at that point, not before |
 | Supabase Postgres connection | ✅ verified end-to-end (SQLAlchemy → DB → FastAPI response) |
 | `pytest`, `ruff`, `streamlit` (dev extras) | ✅ installed |
-| Windows Task Scheduler entry for daily collection | ⬜ Phase 1, once an adapter has a real target |
+| Windows Task Scheduler entry for daily collection | ✅ `APIx-DailyCollection`, daily 06:00, defined in `scripts/register_task.ps1` — collecting real Air India quotes since 2026-09-09 |
 
 ## 4. What's been scaffolded already (this session)
 
@@ -121,8 +121,9 @@ scripts/
   sql/0001_init.sql         full schema: route, collection_run, selector_confirmation,
                              fare_quote, stratum_panel, index_value — matches docs/03 1:1
   seed_routes.py            loads config/routes.yaml into the route table
-  run_collection.py         the daily entrypoint — REAL now: registers Tier1IndiGoTariffAdapter,
-                             persists parsed quotes to fare_quote (inline minimal NORMALISE)
+  run_collection.py         the daily entrypoint — REAL now: registers the IndiGo and Air India
+                             adapters, persists parsed quotes to fare_quote (inline minimal
+                             NORMALISE) including the full fare decomposition
   run_collection.bat        Task Scheduler wrapper (sets working dir, logs to logs/)
 config/
   routes.yaml               PLACEHOLDER 10-route basket (§3.2 replaces this)
@@ -137,7 +138,10 @@ src/apix/
   acquisition/pdf_tariff.py   REAL, working: parses IndiGo's tariff-band PDF structure —
                              section-tracking, MINUS-SIGN route separator, NA handling
   acquisition/tier1_indigo.py   REAL, first working adapter — see §5a for the honest scope
-                             of what its output means
+                             of what its output means (source now robots-disallowed, §5b)
+  acquisition/ai_tariff.py    REAL: Air India's sheet — base-fare table + Page-II tax schedule
+  acquisition/tier1_air_india.py  REAL, the live adapter — fare construction, the GST rule
+                             and the directional tax wedge; see §5d
   db/models.py                 SQLAlchemy models mirroring 0001_init.sql
   db/engine.py
   index/jevons.py              elementary aggregation, pure function
@@ -345,6 +349,77 @@ are hand-worked from docs/02, not recorded from a run.
 
 So the engine is ready and will produce a series the day real quotes start
 arriving. It has not yet produced one.
+
+> **Update, 2026-09-09.** Real quotes are now arriving (§5d) and the engine
+> still produces nothing — correctly. Every row collected so far is a filed
+> tariff band, which `load_observations()` excludes by design. The binding
+> constraint has moved from *collection* to *the kind of price collected*: the
+> headline needs a Tier-3 **offer** source. The caveat above stands, but for a
+> different reason than when it was written.
+
+## 5d. Phase 2 — the Air India adapter (2026-09-09)
+
+The second real adapter, and the first source whose output can support
+docs/02 §2's base-fare and tax-wedge sub-indices. `src/apix/acquisition/tier1_air_india.py`,
+parsing via `ai_tariff.py`, registered in `scripts/run_collection.py`.
+
+**What it emits:** 10 quotes per run — the five basket city-pairs in both
+directions — each with `base_fare`, `udf`, `asf`, `rcs_levy`, `carrier_charges`
+(YQ), `gst` and a constructed `total_fare`. First live run 2026-09-09:
+`succeeded`, 10 parsed, 10 written, no warnings.
+
+### The decision inside it
+
+`total_fare` is **constructed, not read**. The sheet files base fares on one
+page and a charge schedule on another, and states the rule ("Total Fare
+comprises of Base Fare plus Tax/Fee/Charge and applicable GST") without fully
+determining it: *"5% ... on Base Fare & YR"* leaves open whether the
+pass-through airport charges sit inside the taxable base.
+
+**Operator decision, taken 2026-09-09: the broad reading.** GST applies to
+base + UDF + ASF + RCS + CUTE, excluding YQ. For DEL→HYD that is a taxable
+1808, GST 90.40, total 2447.40; the narrow literal reading would give 71.00
+and 2428.00. ~2% on the index **level**, largely cancelling in the
+period-to-period relatives docs/02 §3 validates against. Both readings are
+written into the adapter docstring, and the rule is pinned by a test that
+fails loudly rather than drifting. Changing it requires bumping `CONFIG_HASH`.
+
+### What this source gives that IndiGo's does not
+
+The base fare is filed "Market & V.V." — symmetric, like IndiGo's. But the
+*charges* are directional: UDF is levied at the departure airport and the
+"new Arrival Tax" at seven named destinations. So DEL→BLR and BLR→DEL share a
+base fare of 1580 and carry 152 against 715 of UDF. That asymmetry is real
+filed data. It is still not a substitute for directional *offer* prices.
+
+### Two silent seams found while wiring it up
+
+1. **The decomposition columns were never persisted.** `base_fare`, `udf`,
+   `asf`, `rcs_levy`, `gst` and `carrier_charges` have existed since
+   `0001_init.sql`; `_persist_quotes` wrote only `total_fare`, because
+   IndiGo's sheet publishes nothing else. Adding a source that files the
+   breakdown would have silently discarded the entire reason for adding it.
+   This is the same shape as Defect 4 in §5b: a column that existed from day
+   one with nothing writing to it.
+2. **The headline filter was a single hard-coded tag.** Air India's rows are
+   tagged `tier1_filed_base_fare`, distinct from IndiGo's `tier1_tariff_floor`
+   because they are a different economic object. `engine.load_observations()`
+   compared against one constant, so a distinctly-tagged Tier-1 source would
+   have been **included** in the headline — the exact contamination §5a
+   flagged three phases in advance. Now `TIER1_FILED_FARE_CLASSES`, a set,
+   with the coupling asserted by a test in the adapter's own suite.
+
+Both were found by inspecting the output rather than by a failing test, which
+is §5b's "the pattern worth naming" holding for a second phase running.
+
+### Verified, not assumed
+
+Robots re-checked with `scripts/check_robots.py` before the first live fetch —
+Air India ALLOWED, both known-blocked controls still BLOCKED. The adapter was
+then run against the real sheet offline, run live, and the resulting
+`fare_quote` rows read back out of Supabase and checked: 10 rows, no
+`exclusion_reason`, `robots_checked_at` and `config_hash` stamped, and every
+row's components reconciling to its own total.
 
 ## 6. Open questions — decisions to make now, not defer
 
