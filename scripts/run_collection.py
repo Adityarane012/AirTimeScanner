@@ -33,11 +33,20 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from apix.acquisition.base import SourceAdapter
+from apix.acquisition.tier1_air_india import Tier1AirIndiaTariffAdapter
 from apix.acquisition.tier1_indigo import Tier1IndiGoTariffAdapter
 from apix.db.engine import get_session
 from apix.db.models import CollectionRun, FareQuoteRow, Route
 
-ADAPTERS: list[SourceAdapter] = [Tier1IndiGoTariffAdapter()]
+# IndiGo stays registered although its source is robots.txt-disallowed and it
+# therefore fails cleanly on every run: that daily robots.txt fetch is the
+# cheapest way to notice if the `*.pdf` rule ever changes. See
+# docs/06-recon-log.md. Its failure cannot affect Air India — adapter
+# isolation is the point of the loop in main().
+ADAPTERS: list[SourceAdapter] = [
+    Tier1IndiGoTariffAdapter(),
+    Tier1AirIndiaTariffAdapter(),
+]
 
 
 def _persist_quotes(session, quotes, run_id) -> tuple[int, int]:
@@ -74,6 +83,19 @@ def _persist_quotes(session, quotes, run_id) -> tuple[int, int]:
                 advance_purchase_days=q.advance_purchase_days,
                 fare_class=q.fare_class,
                 is_nonstop=q.is_nonstop,
+                # The decomposition columns have existed since 0001_init.sql
+                # with nothing writing them, because IndiGo's sheet publishes
+                # only a total. Air India files the breakdown, and it is what
+                # docs/02 §2's base-fare and tax-wedge sub-indices are built
+                # from — writing only total_fare would have thrown away the
+                # entire reason for adding the source.
+                base_fare=q.base_fare,
+                carrier_charges=q.carrier_charges,
+                udf=q.udf,
+                asf=q.asf,
+                rcs_levy=q.rcs_levy,
+                gst=q.gst,
+                convenience_fee=q.convenience_fee,
                 total_fare=q.total_fare,
                 observation_status=q.observation_status,
                 raw_payload_hash=q.raw_payload_hash,
