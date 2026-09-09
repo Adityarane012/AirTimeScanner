@@ -74,8 +74,9 @@ The reasoning, stated so it can be revisited rather than inherited:
 - **The R packages are mature but are R.** Adding an R runtime to a solo
   Windows project — for formulas that are a geometric mean and a weighted
   arithmetic mean — is a poor trade.
-- **Most of `apix/index/` is not formulas anyway.** The `tier1_tariff_floor`
-  exclusion, coverage-floor suppression, the mandatory sensitivity band, the
+- **Most of `apix/index/` is not formulas anyway.** The filed-tariff
+  exclusion (`TIER1_FILED_FARE_CLASSES`), coverage-floor suppression, the
+  mandatory sensitivity band, the
   config-hash and vintage stamping, the day-of-week centred average: no library
   provides these, because they are this project's rules, not general ones.
 

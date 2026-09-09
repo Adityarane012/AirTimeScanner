@@ -311,7 +311,7 @@ The live DB is Supabase-hosted Postgres 17, connection string in `.env`. `bootst
 T+45 was removed. This is consistent across: `config/routes.yaml`, `config/booking_curve.yaml`, `contracts/fare_quote.py` (`AdvancePurchaseDays` type), `0001_init.sql` (CHECK constraint), and most docs.
 
 > [!NOTE]
-> **`docs/03-architecture.md` previously said "× 5 windows" in two places** (lines 8 and 53). Fixed this session to "× 4 windows" with recalculated estimates (~2,400/day). This fix is uncommitted.
+> **`docs/03-architecture.md` previously said "× 5 windows" in two places** (lines 8 and 53), corrected to "× 4 windows" with recalculated estimates (~2,400/day). Committed.
 
 ### The booking-curve gap
 The composite index relies on assumed booking-curve weights (Q1 in open questions). Every composite value MUST carry a sensitivity band showing the result under `front_loaded` and `back_loaded` alternate curves from `config/booking_curve.yaml`. Never publish a bare point estimate.

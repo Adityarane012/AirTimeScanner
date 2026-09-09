@@ -155,16 +155,22 @@ a test asserting exactly that.
 ### Consequences
 
 - **Phase 2 is unblocked.** Air India is a compliant, reachable Tier-1 source.
+  *(Outcome, 2026-09-09: adapter built and collecting daily — see the closing
+  section of this log.)*
 - **The Air India sheet needs its own parser.** It is 8 pages, not 68, with an
   index page and different section headers ("Domestic : Economy Basic Fares").
   `pdf_tariff.parse_tariff_sections()` finds nothing in it — reuse is not
-  available.
+  available. *(Built: `ai_tariff.py`.)*
 - **It may be a better source than IndiGo was.** It separates *Basic Fares*
   from a *Taxes, Fees & Charges* page, which is what docs/02 §2's base-fare and
   tax-and-fee-wedge sub-indices need and which IndiGo's total-only sheet could
-  not support.
+  not support. *(Confirmed — and it turned out to give something not
+  anticipated here: a **directional** tax wedge, since UDF is levied at the
+  departure airport and the arrival tax at the destination.)*
 - **It is not stale.** The sheet states "W.I.E. till 30th June 2027", so unlike
   IndiGo's dated-filename pattern there is no monthly-republication race.
+  *(The adapter parses that date and warns once it passes, rather than
+  inferring staleness from republication cadence as the IndiGo adapter must.)*
 - **Akasa needs a live probe** to resolve the 403 ambiguity, and SpiceJet still
   needs its tariff URL located.
 
@@ -187,9 +193,12 @@ of scope for week 1 per IMPLEMENTATION.md §1).
 ## Open items carried into Phase 1
 
 1. ~~Live-verify IndiGo robots.txt~~ — **done above, fully confirmed.**
-   Air India's still not live-verified (same site-root reset expected;
-   apply the same `impersonate="chrome"`-no-custom-header technique when
-   it's Air India's turn).
+   ~~Air India's still not live-verified~~ — **done 2026-09-09**, and the
+   site-root reset was indeed present: `www.airindia.com` resets the
+   connection on a custom User-Agent alongside `impersonate="chrome"`, and
+   `PoliteFetcher`'s documented fallback handled it automatically (three
+   `curl: (92)` retries, then success on the impersonation-only path). The
+   robots verdict was still evaluated against our own agent token throughout.
 2. Resolve the Air India Express `/content/dam` conflict — don't build an
    adapter against it until this is actually decided, not assumed.
 3. Confirm `assets.akasaair.com`'s actual crawl posture (the 403 on
@@ -197,11 +206,12 @@ of scope for week 1 per IMPLEMENTATION.md §1).
 4. Find SpiceJet's actual tariff-sheet URL (or confirm it doesn't publish one
    in a discoverable location, which would itself be a compliance-relevant
    fact worth raising with DGCA/the sponsor per Q4).
-5. Sanity-check whether these PDFs are machine-parseable at all (IndiGo's is
-   flagged as vector/graphics output) before committing to "PDF parsing" as
-   the Phase 1 approach for any given carrier — a table-only alternate format
-   (HTML, CSV) may exist and be preferable if so. **First concrete task of
-   the Phase 1 build below.**
+5. ~~Sanity-check whether these PDFs are machine-parseable at all~~ —
+   **resolved for both carriers.** IndiGo's parses via `extract_text()`;
+   Air India's needs *both* modes, `extract_text()` for the fare tables and
+   `extract_tables()` for the charge schedule, because the charge page's
+   columns interleave into unusable strings under text extraction. No
+   alternate format was needed for either.
 
 ## Phase 0 sign-off
 
@@ -221,7 +231,59 @@ you are both engineer and sponsor):
   `docs/07-dgca-outreach-draft.md`. Sending it is yours to do (outbound
   correspondence to a government body under your name), not something to
   automate.
-- **Compliance posture for the Phase-1 target (IndiGo)** — signed off:
-  robots.txt confirmed clear, Terms & Conditions checked for anti-automation
-  language (none found), identified UA used, rate limiting still to be
-  applied at adapter-build time (single low-frequency fetch, not a crawl).
+- ~~**Compliance posture for the Phase-1 target (IndiGo)** — signed off:
+  robots.txt confirmed clear~~ — **THIS SIGN-OFF WAS WRONG.** It rested on the
+  grep-based robots check corrected earlier in this document: IndiGo's
+  `Disallow: *.pdf` matches by file extension, which a path search cannot see.
+  The sign-off is left visible rather than deleted, because the failure it
+  represents is the point — a compliance gate that is *checked by hand once*
+  and then signed off is not a control. The rest of the bullet held (T&Cs
+  checked, no anti-automation language, identified UA, single low-frequency
+  fetch). See "Re-verification with a real parser" above.
+
+- **Compliance posture for the live Phase-2 target (Air India)** — signed off
+  2026-09-09, and this time by the production gate rather than by hand:
+  `scripts/check_robots.py` evaluates the actual URL for our actual agent
+  token using the same `RobotsGate` the collector runs, and it re-runs on
+  every collection. IndiGo and Air India Express are kept in the sweep as
+  known-blocked controls, so a regression in the checker is visible rather
+  than silent.
+
+---
+
+## First live collection (2026-09-09)
+
+Recon ends here: the Air India adapter is built and the daily series has
+started. What the reconnaissance above actually bought, stated against what it
+claimed:
+
+| Claim from recon | Held? |
+|---|---|
+| Air India's sheet is robots-allowed for our agent | ✅ Re-verified by `check_robots.py` immediately before the first live fetch |
+| The sheet is reachable | ✅ With the documented UA/TLS fallback — `www.airindia.com` resets on a custom User-Agent exactly as `www.goindigo.in` does |
+| It separates base fares from taxes and charges | ✅ And supports a directional tax wedge, which recon did not anticipate |
+| It states validity to 30 June 2027 | ✅ Parsed from page 1; the adapter warns once that date passes |
+| The basket's routes are in the filing | ✅ All five metro pairs present — 224 economy rows parsed, 0 skipped |
+
+**Result:** 10 quotes written on the first run, one per basket route, each with
+a full decomposition. `collection_run.status = succeeded`, no warnings.
+
+Two things this log should be honest about, because both were assumptions that
+survived until the adapter forced them:
+
+1. **The city vocabulary had to come from the document, not from the basket.**
+   `split_city_pair` needs to know where a multi-word origin ends
+   ("Ahmedabad North Goa"), so it needs every city in the sheet, not just the
+   five we care about. Derived by taking every unambiguous two-token row from
+   the real filing, which then resolves all 224 rows with zero skips.
+2. **A missing charge row is not always missing data.** Mumbai files no
+   departure UDF anywhere in the sheet and appears only as an arrival tax.
+   Reading that as "unknown" would have dropped every Mumbai-origin route;
+   reading it as "not filed" is what the document actually says. The guard
+   against a genuine parse regression is a floor on the number of UDF rows
+   found, not per-airport suspicion.
+
+**Still open from this log, unchanged:** Akasa's 403 on `/robots.txt` (recorded
+UNVERIFIED, not allowed), SpiceJet's tariff URL (host open, no sheet located),
+and the Air India Express `/content/dam` conflict (blocked, deliberately not
+routed around).

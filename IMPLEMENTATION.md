@@ -56,7 +56,8 @@ Checked/set up this session, all independently verified (not just asserted):
   `scripts/bootstrap_db.sql` is kept as a fallback if you ever want to move
   back to fully local Postgres — see the note at its top.
 - **Python 3.11.15** and **uv 0.11.19** available on PATH; `.venv` created,
-  `pytest -q` green (9/9 golden-fixture tests).
+  `pytest -q` green (9/9 golden-fixture tests at the time; 119/119 as of
+  2026-09-09, still with no DB and no network needed).
 - **Scrapling requires its `[fetchers]` extra** (`curl_cffi`, `playwright`,
   `patchright`, `browserforge`) — bare `scrapling` cannot even import
   `Fetcher`. Fixed in `pyproject.toml` (`scrapling[fetchers]>=0.4.15`) and
