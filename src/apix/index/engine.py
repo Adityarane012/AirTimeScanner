@@ -18,12 +18,18 @@ Pipeline, in order:
 Two filters at the input decide whether the output is a statistic or a
 plausible-looking number, and both are easy to omit by accident:
 
-1. **`fare_class = 'tier1_tariff_floor'` rows are excluded from the headline.**
-   IMPLEMENTATION.md §5a flagged this three phases in advance. Those rows are
-   filed tariff *bands* — non-directional, not tied to a departure date, and a
-   floor rather than an available offer. They are structural anchors, not index
-   inputs. Including them would silently contaminate the headline with a
-   different economic object.
+1. **Filed-tariff rows are excluded from the headline**, by `fare_class` —
+   see `TIER1_FILED_FARE_CLASSES`. IMPLEMENTATION.md §5a flagged this three
+   phases in advance. Those rows are filed tariff *bands* — not tied to a
+   departure date, and a floor rather than an available offer. They are
+   structural anchors, not index inputs. Including them would silently
+   contaminate the headline with a different economic object.
+
+   This filter keys on an exact tag, so **every new Tier-1 adapter must add
+   its own tag to that set**. A carrier tagged distinctly (as Air India is,
+   to keep its fare decomposition distinguishable) and then forgotten here
+   does not fail loudly — it quietly starts feeding filed bands into the
+   headline, which is the exact contamination this filter exists to stop.
 2. **Rows carrying an `exclusion_reason` are excluded.** docs/02 §7 requires
    excluded observations to be retained and auditable, not deleted — so they
    are still in the table, and the engine must actively filter them out.
@@ -42,8 +48,13 @@ from apix.index import aggregate
 from apix.index.config import ADVANCE_PURCHASE_WINDOWS, MethodologyConfig
 from apix.index.relatives import Observation, build_relatives, flag_outliers, impute_missing
 
-# Rows tagged with this fare_class are Tier-1 filed tariff bands, not offers.
-TIER1_ANCHOR_FARE_CLASS = "tier1_tariff_floor"
+# Rows tagged with one of these fare_classes are Tier-1 filed tariff bands,
+# not offers. Add a tag here when adding a Tier-1 adapter — see filter 1 in the
+# module docstring for why forgetting is silent rather than loud.
+TIER1_FILED_FARE_CLASSES = frozenset({
+    "tier1_tariff_floor",     # tier1_indigo: filed floor, total fare only
+    "tier1_filed_base_fare",  # tier1_air_india: filed base fare + decomposition
+})
 
 SERIES_HEADLINE = "apix.headline"
 SERIES_HEADLINE_RAW = "apix.headline.raw"
@@ -92,7 +103,7 @@ def load_observations(session, period_start: date, period_end: date) -> list[Obs
         )
         .where(
             (FareQuoteRow.fare_class.is_(None))
-            | (FareQuoteRow.fare_class != TIER1_ANCHOR_FARE_CLASS)
+            | (FareQuoteRow.fare_class.notin_(sorted(TIER1_FILED_FARE_CLASSES)))
         )
     )
     return [
