@@ -122,10 +122,18 @@ binding constraint, not collection.
 Branch `claude/airfare-price-index-india-saqd83`. Working tree clean, 119/119
 tests green, ruff clean.
 
-**10 commits unpushed** (the earlier batch of 10 has already been pushed):
+**Everything through `98fdab4` is pushed to `origin`** (2026-09-09). Don't
+trust that line on its own — a stale "N commits unpushed" note is how this
+section rots. Ask git:
 
 ```
-85b807f  Record the Air India adapter and the closed GST decision in the docs
+git status -sb          # ahead/behind vs origin, after a fetch
+```
+
+Recent commits, newest first:
+
+```
+98fdab4  Record the Air India adapter and the closed GST decision in the docs
 9886b82  Add the Air India adapter and start the daily collection series
 191f6ff  Exclude every Tier-1 filed fare class from the headline index
 1d18f4b  Update the handoff for end of session; correct an overstated test count
@@ -137,8 +145,9 @@ tests green, ruff clean.
 8ea76a0  Add a repeatable robots.txt check, replacing the grep that got it wrong
 ```
 
-To push (pushes are denied at this session's permission layer, so run it
-manually):
+Pushes are denied at the Claude Code session's permission layer, so run it
+yourself — it works fine from a normal terminal, where Git Credential Manager
+can prompt:
 
 ```
 git push origin claude/airfare-price-index-india-saqd83
