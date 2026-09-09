@@ -29,8 +29,31 @@
 **The collection clock is running — do not break it.** The Air India adapter
 is live and writing 10 quotes/day. `IMPLEMENTATION.md §0` notes the series is
 wall-clock bound and cannot be backfilled, so from here the first duty of any
-change is to not silently stop the daily run. Check `logs/collection.log` and
-`collection_run.status` before anything else.
+change is to not silently stop the daily run.
+
+**First thing: confirm day 2 landed.** The 2026-09-09 run was launched by hand
+during the session; the 06:00 run on **2026-09-10** is the first unattended one
+with this adapter, and it is the first real exercise of two guards that have
+never both run together — the scheduled task's battery/missed-run settings
+(fixed 09-07) and the daily-observation unique index (`sql/0002`). Expect
+**20 rows** in `fare_quote` for Air India, not 10 and not 30:
+
+```sql
+SELECT (collection_ts AT TIME ZONE 'UTC')::date AS day, count(*)
+FROM fare_quote
+WHERE source = 'tier1_air_india_tariff'
+GROUP BY 1 ORDER BY 1;
+```
+
+- **10 rows and one day** → the scheduled run didn't fire. Check
+  `logs/collection.log` and `Get-ScheduledTaskInfo -TaskName APIx-DailyCollection`.
+- **20 rows across two days** → correct; the series is compounding.
+- **more than 20** → the dedupe index is not doing its job, which is the
+  Phase-1 duplicate defect returning. Stop and read `sql/0002`'s header.
+
+Note the 09-09 rows were collected at ~17:02 UTC, so day 2's are ~00:30 UTC —
+a shorter-than-24h gap. That is expected and harmless; the grain is the UTC
+*date*, not the instant.
 
 The next task is **the real DGCA route basket** (§7 item 1 below). It is the
 last thing standing between the engine and a defensible upper-level
@@ -92,6 +115,12 @@ binding constraint, not collection.
 5. **Re-verified every carrier robots verdict** before the first live fetch.
    Air India still ALLOWED; both known-blocked controls still BLOCKED, so the
    checker has not regressed.
+6. **Documentation pass across the whole repo.** The README still claimed no
+   adapter had a real target URL. It, `docs/06-recon-log.md` (recon closed out
+   against what its claims were actually worth) and `docs/08` were brought in
+   line. `docs/00`–`05` were deliberately left alone: they are design specs and
+   sponsor decisions, and editing a spec to track build progress is how it
+   stops being a spec.
 
 ### What changed on 2026-09-07 (long session — full detail in IMPLEMENTATION.md §5b/§5c)
 
@@ -122,9 +151,10 @@ binding constraint, not collection.
 Branch `claude/airfare-price-index-india-saqd83`. Working tree clean, 119/119
 tests green, ruff clean.
 
-**Everything through `98fdab4` is pushed to `origin`** (2026-09-09). Don't
-trust that line on its own — a stale "N commits unpushed" note is how this
-section rots. Ask git:
+**Everything through `4a4a9fc` is pushed to `origin`** (2026-09-09), *except
+the commit carrying this handoff update itself* — push that one and the tree
+is fully in sync. Don't trust this line on its own; a hand-maintained "N
+commits unpushed" note is how this section rots. Ask git:
 
 ```
 git status -sb          # ahead/behind vs origin, after a fetch
@@ -133,6 +163,8 @@ git status -sb          # ahead/behind vs origin, after a fetch
 Recent commits, newest first:
 
 ```
+4a4a9fc  Bring the docs in line with a project that now collects daily
+9e7cdb2  Stop recording an unpushed-commit count that goes stale immediately
 98fdab4  Record the Air India adapter and the closed GST decision in the docs
 9886b82  Add the Air India adapter and start the daily collection series
 191f6ff  Exclude every Tier-1 filed fare class from the headline index
