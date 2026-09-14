@@ -2,11 +2,18 @@
 
 Orchestration is Prefect/Airflow in the target design (docs/03-architecture.md);
 that's cut for the 1-week solo build (see IMPLEMENTATION.md "What's cut").
-This script IS the orchestrator for now: run it once daily via Windows Task
-Scheduler. Migrating to Prefect later is mechanical, since adapter logic
-lives in apix.acquisition and never talks to the scheduler.
+This script IS the orchestrator for now, launched by Windows Task Scheduler.
+Migrating to Prefect later is mechanical, since adapter logic lives in
+apix.acquisition and never talks to the scheduler.
 
-    python scripts/run_collection.py
+    python scripts/run_collection.py            # collect whatever is due today
+    python scripts/run_collection.py --force    # fetch every source regardless
+
+**Safe to launch as often as you like.** Each source is fetched at most once
+per UTC day once it succeeds (see `apix.ops.collection_health.decide`), so the
+scheduler does not have to bet on a single slot — which matters on a laptop
+that is shut down every night and was never once awake at 06:00. A launch with
+nothing due makes one small query per source and no network requests.
 
 Adapter isolation is enforced here: one adapter's exception can never stop
 the others (SourceAdapter.run() already catches internally; this loop is a
@@ -22,9 +29,11 @@ adapter's worth of quotes flowing.
 
 from __future__ import annotations
 
+import argparse
 import sys
 import uuid
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -37,16 +46,45 @@ from apix.acquisition.tier1_air_india import Tier1AirIndiaTariffAdapter
 from apix.acquisition.tier1_indigo import Tier1IndiGoTariffAdapter
 from apix.db.engine import get_session
 from apix.db.models import CollectionRun, FareQuoteRow, Route
+from apix.ops.collection_health import decide, utc_day_bounds
+
+# Retries per UTC day for a source that is meant to be collecting. Enough to
+# ride out a network that is not up yet straight after boot; few enough that a
+# source failing for a real reason is not re-fetched all day.
+MAX_ATTEMPTS_PER_DAY = 3
+
+
+@dataclass(frozen=True)
+class ScheduledSource:
+    adapter: SourceAdapter
+    # A tripwire is expected to fail. It exists to notice when that changes, so
+    # one attempt a day is its whole job, and its failure is not news.
+    tripwire: bool = False
+
+    @property
+    def max_attempts_per_day(self) -> int:
+        return 1 if self.tripwire else MAX_ATTEMPTS_PER_DAY
+
 
 # IndiGo stays registered although its source is robots.txt-disallowed and it
 # therefore fails cleanly on every run: that daily robots.txt fetch is the
 # cheapest way to notice if the `*.pdf` rule ever changes. See
 # docs/06-recon-log.md. Its failure cannot affect Air India — adapter
 # isolation is the point of the loop in main().
-ADAPTERS: list[SourceAdapter] = [
-    Tier1IndiGoTariffAdapter(),
-    Tier1AirIndiaTariffAdapter(),
+SOURCES: list[ScheduledSource] = [
+    ScheduledSource(Tier1IndiGoTariffAdapter(), tripwire=True),
+    ScheduledSource(Tier1AirIndiaTariffAdapter()),
 ]
+
+
+def _statuses_today(session, source: str, today: date) -> list[str]:
+    start, end = utc_day_bounds(today)
+    stmt = select(CollectionRun.status).where(
+        CollectionRun.source == source,
+        CollectionRun.started_at >= start,
+        CollectionRun.started_at < end,
+    )
+    return list(session.execute(stmt).scalars())
 
 
 def _persist_quotes(session, quotes, run_id) -> tuple[int, int]:
@@ -111,13 +149,34 @@ def _persist_quotes(session, quotes, run_id) -> tuple[int, int]:
     return written, duplicates
 
 
-def main() -> None:
-    if not ADAPTERS:
-        print("No adapters registered yet. Add one in scripts/run_collection.py "
-              "once Phase 0 reconnaissance confirms a real Tier-1 target.")
-        return
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="fetch every source even if it already ran today (operator use)",
+    )
+    return parser.parse_args(argv)
 
-    for adapter in ADAPTERS:
+
+def main(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
+    today = datetime.now(UTC).date()
+    print(f"--- collection run {datetime.now(UTC):%Y-%m-%d %H:%M:%S} UTC ---")
+
+    for scheduled in SOURCES:
+        adapter = scheduled.adapter
+        if not args.force:
+            with get_session() as session:
+                decision = decide(
+                    _statuses_today(session, adapter.name, today),
+                    scheduled.max_attempts_per_day,
+                )
+            if not decision.run:
+                print(f"{adapter.name}: skipped ({decision.reason})")
+                continue
+            print(f"{adapter.name}: running ({decision.reason})")
+
         started_at = datetime.now(UTC)
         result = adapter.run()
         run_id = uuid.uuid4()
