@@ -1,58 +1,80 @@
-# Registers (or re-registers) the daily collection task.
+# Registers (or re-registers) the collection task.
 #
-# run_collection.bat referenced this script from day one, but it was never
-# actually written — so the scheduled task existed only as a one-off manual
-# registration that nothing could reproduce or review. That is how it ended
-# up with the settings that silently broke collection:
-#
-#   DisallowStartIfOnBatteries = True   -> on a laptop running on battery at
-#                                          06:00 the task is REFUSED outright,
-#                                          surfacing as LastTaskResult
-#                                          0x800710E0 ("The operator or
-#                                          administrator has refused the
-#                                          request") and no log line at all.
-#   StopIfGoingOnBatteries     = True   -> a run that starts on AC dies if the
-#                                          charger is pulled mid-fetch.
-#   StartWhenAvailable         = False  -> a run missed because the machine was
-#                                          asleep or off at 06:00 is never made
-#                                          up. Three of the first four
-#                                          scheduled days produced nothing.
-#
-# For a daily data collector on a personal laptop, all three defaults are
-# wrong: a missed day is a permanent hole in a time series that cannot be
-# backfilled (see IMPLEMENTATION.md §0 — the collection window is wall-clock
-# bound). Run this from an elevated-or-not PowerShell in the repo root:
+# Run from the repo root; no elevation needed:
 #
 #     powershell -ExecutionPolicy Bypass -File scripts\register_task.ps1
 #
-# The task runs as the current interactive user, so it only fires while that
-# user is logged on. Running whether-logged-on-or-not requires storing
-# credentials with the task; that is a deliberate decision for the operator to
-# make, not something this script does silently.
+# This task has silently lost data twice, each time in a different way, so
+# both histories are kept here next to the settings that fix them.
+#
+# 1. Refused and never made up (found 2026-09-07). The task was first
+#    registered by hand, and nothing recorded its settings. The defaults were
+#    wrong for a laptop:
+#
+#      DisallowStartIfOnBatteries = True  -> refused outright on battery at
+#                                            06:00 (0x800710E0), no log line
+#      StopIfGoingOnBatteries     = True  -> killed if the charger is pulled
+#      StartWhenAvailable         = False -> a run missed while off or asleep
+#                                            is never made up
+#
+#    Three of the first four scheduled days produced nothing.
+#
+# 2. Launched into a window that got closed (found 2026-09-14). With (1)
+#    fixed, the laptop was still shut down at 06:00 every day, so every run
+#    was a catch-up run shortly after login. Those ran run_collection.bat in a
+#    cmd console on the desktop, blank because output went to the log. Runs
+#    were killed with 0xC000013A (console closed), and 09-10 to 09-14 were
+#    lost. Fixed by launching pythonw through run_collection_scheduled.pyw,
+#    which has no console at all.
+#
+# Why hourly instead of once at 06:00: a single daily slot bets the whole day
+# on one moment the machine may not be awake for. run_collection.py skips any
+# source already collected today (apix.ops.collection_health.decide), so an
+# hourly launch normally costs one small database query and no fetch. It
+# catches up within the hour of any boot, and a failure gets retried later
+# the same day instead of losing the day.
+#
+# The task runs as the current interactive user, so it fires only while that
+# user is logged on. On this machine that is effectively whenever it is on.
+# "Run whether logged on or not" (S4U) would also cover the gap between boot
+# and login, but it needs the "log on as a batch job" right and has no
+# network credentials. That is a decision for the operator, not something
+# this script makes silently.
 
 $ErrorActionPreference = 'Stop'
 
-$TaskName = 'APIx-DailyCollection'
-$RepoRoot = Split-Path -Parent $PSScriptRoot
-$BatPath  = Join-Path $RepoRoot 'scripts\run_collection.bat'
+$TaskName   = 'APIx-DailyCollection'
+$RepoRoot   = Split-Path -Parent $PSScriptRoot
+$PythonW    = Join-Path $RepoRoot '.venv\Scripts\pythonw.exe'
+$Launcher   = Join-Path $RepoRoot 'scripts\run_collection_scheduled.pyw'
 
-if (-not (Test-Path $BatPath)) {
-    throw "Cannot find $BatPath"
+foreach ($path in @($PythonW, $Launcher)) {
+    if (-not (Test-Path $path)) { throw "Cannot find $path" }
 }
 
-$action = New-ScheduledTaskAction -Execute $BatPath -WorkingDirectory $RepoRoot
+$action = New-ScheduledTaskAction `
+    -Execute $PythonW `
+    -Argument "`"$Launcher`"" `
+    -WorkingDirectory $RepoRoot
 
-# 06:00 daily. RandomDelay spreads the request off an exact-hour boundary —
-# politeness, consistent with the rate limiting in acquisition/compliance.py.
-$trigger = New-ScheduledTaskTrigger -Daily -At 6am
+# Daily from midnight, repeating hourly for the whole day. RandomDelay moves
+# each launch off the exact hour, in line with the rate limiting in
+# acquisition/compliance.py.
+$trigger = New-ScheduledTaskTrigger -Daily -At 12am
+$trigger.Repetition = (New-ScheduledTaskTrigger -Once -At 12am `
+    -RepetitionInterval (New-TimeSpan -Hours 1) `
+    -RepetitionDuration (New-TimeSpan -Days 1)).Repetition
 $trigger.RandomDelay = 'PT10M'
 
+# A normal run takes well under a minute. Thirty minutes is generous and
+# still ends a hung run before the next hourly launch. MultipleInstances
+# IgnoreNew stops launches from stacking up behind a slow run.
 $settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `
     -DontStopIfGoingOnBatteries `
     -AllowStartIfOnBatteries `
     -MultipleInstances IgnoreNew `
-    -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
 
 $principal = New-ScheduledTaskPrincipal `
     -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) `
@@ -64,7 +86,7 @@ Register-ScheduledTask -TaskName $TaskName `
     -Trigger $trigger `
     -Settings $settings `
     -Principal $principal `
-    -Description 'APIx daily airfare collection (scripts/run_collection.py)' `
+    -Description 'APIx airfare collection, hourly; skips sources already collected today (scripts/run_collection.py)' `
     -Force | Out-Null
 
 Write-Host "Registered '$TaskName'."
