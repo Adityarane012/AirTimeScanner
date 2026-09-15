@@ -32,49 +32,30 @@ from __future__ import annotations
 import argparse
 import sys
 import uuid
-from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from apix.acquisition.base import SourceAdapter
-from apix.acquisition.tier1_air_india import Tier1AirIndiaTariffAdapter
-from apix.acquisition.tier1_indigo import Tier1IndiGoTariffAdapter
 from apix.db.engine import get_session
 from apix.db.models import CollectionRun, FareQuoteRow, Route
-from apix.ops.collection_health import decide, utc_day_bounds
-
-# Retries per UTC day for a source that is meant to be collecting. Enough to
-# ride out a network that is not up yet straight after boot; few enough that a
-# source failing for a real reason is not re-fetched all day.
-MAX_ATTEMPTS_PER_DAY = 3
+from apix.ops.collection_health import DONE_STATUSES, decide, run_alert, utc_day_bounds
+from apix.ops.notify import notify
+from apix.ops.sources import scheduled_sources
 
 
-@dataclass(frozen=True)
-class ScheduledSource:
-    adapter: SourceAdapter
-    # A tripwire is expected to fail. It exists to notice when that changes, so
-    # one attempt a day is its whole job, and its failure is not news.
-    tripwire: bool = False
-
-    @property
-    def max_attempts_per_day(self) -> int:
-        return 1 if self.tripwire else MAX_ATTEMPTS_PER_DAY
-
-
-# IndiGo stays registered although its source is robots.txt-disallowed and it
-# therefore fails cleanly on every run: that daily robots.txt fetch is the
-# cheapest way to notice if the `*.pdf` rule ever changes. See
-# docs/06-recon-log.md. Its failure cannot affect Air India — adapter
-# isolation is the point of the loop in main().
-SOURCES: list[ScheduledSource] = [
-    ScheduledSource(Tier1IndiGoTariffAdapter(), tripwire=True),
-    ScheduledSource(Tier1AirIndiaTariffAdapter()),
-]
+def _last_success_before(session, source: str, today: date) -> date | None:
+    start, _ = utc_day_bounds(today)
+    stmt = select(func.max(CollectionRun.started_at)).where(
+        CollectionRun.source == source,
+        CollectionRun.status.in_(DONE_STATUSES),
+        CollectionRun.started_at < start,
+    )
+    latest = session.execute(stmt).scalar_one_or_none()
+    return latest.astimezone(UTC).date() if latest else None
 
 
 def _statuses_today(session, source: str, today: date) -> list[str]:
@@ -164,14 +145,16 @@ def main(argv: list[str] | None = None) -> None:
     today = datetime.now(UTC).date()
     print(f"--- collection run {datetime.now(UTC):%Y-%m-%d %H:%M:%S} UTC ---")
 
-    for scheduled in SOURCES:
+    # Adapter isolation: one source's failure cannot stop the others, since
+    # SourceAdapter.run() catches internally and the loop carries on.
+    for scheduled in scheduled_sources():
         adapter = scheduled.adapter
+        with get_session() as session:
+            statuses_today = _statuses_today(session, adapter.name, today)
+            previous_success = _last_success_before(session, adapter.name, today)
+
         if not args.force:
-            with get_session() as session:
-                decision = decide(
-                    _statuses_today(session, adapter.name, today),
-                    scheduled.max_attempts_per_day,
-                )
+            decision = decide(statuses_today, scheduled.max_attempts_per_day)
             if not decision.run:
                 print(f"{adapter.name}: skipped ({decision.reason})")
                 continue
@@ -206,6 +189,22 @@ def main(argv: list[str] | None = None) -> None:
         if duplicates:
             summary += f", {duplicates} duplicate"
         print(f"{result.source}: {result.status} ({summary})")
+
+        if not scheduled.tripwire:
+            alert = run_alert(
+                source=adapter.name,
+                status=result.status,
+                statuses_earlier_today=statuses_today,
+                max_attempts=scheduled.max_attempts_per_day,
+                previous_success=previous_success,
+                today=today,
+                notes=result.notes,
+            )
+            if alert:
+                # Logged first and unconditionally: the toast is best effort.
+                print(f"  ALERT: {alert}")
+                shown = notify("APIx collection", alert)
+                print(f"  (desktop notification {'shown' if shown else 'NOT shown'})")
         for warning in result.warnings:
             print(f"  WARNING: {warning}")
 
