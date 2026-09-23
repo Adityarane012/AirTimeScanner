@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from apix.acquisition.base import SourceAdapter
 from apix.acquisition.tier1_air_india import Tier1AirIndiaTariffAdapter
 from apix.acquisition.tier1_indigo import Tier1IndiGoTariffAdapter
+from apix.acquisition.tier3_goibibo import Tier3GoibiboOffersAdapter
 
 # Retries per UTC day for a source that is meant to be collecting. Enough to
 # ride out a network that is not up yet straight after boot; few enough that a
@@ -50,4 +51,10 @@ def scheduled_sources() -> list[ScheduledSource]:
         # docs/06-recon-log.md.
         ScheduledSource(Tier1IndiGoTariffAdapter(), tripwire=True),
         ScheduledSource(Tier1AirIndiaTariffAdapter()),
+        # The first offer source (2026-09-23). Ten route pages per run, one
+        # request each through the shared rate limiter. Its rows never reach
+        # the headline index -- the lead time is Goibibo's choice, not a
+        # methodology window -- so a failure here does not stall the index,
+        # but it does lose a day of offer prices that cannot be backfilled.
+        ScheduledSource(Tier3GoibiboOffersAdapter()),
     ]

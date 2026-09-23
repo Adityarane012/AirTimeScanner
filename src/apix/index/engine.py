@@ -100,6 +100,13 @@ def load_observations(session, period_start: date, period_end: date) -> list[Obs
             FareQuoteRow.total_fare > 0,
             FareQuoteRow.collection_ts >= datetime.combine(period_start, datetime.min.time(), UTC),
             FareQuoteRow.collection_ts < datetime.combine(period_end, datetime.min.time(), UTC),
+            # An offer page that serves a departure date of its own choosing
+            # (Tier 3) yields lead times like T+8 or T+88. Those are real
+            # observations but not the product docs/02 s1 specifies, and
+            # mixing lead times would make period-to-period relatives
+            # compare different goods. Excluded here by construction, not
+            # by remembering to tag them.
+            FareQuoteRow.advance_purchase_days.in_(ADVANCE_PURCHASE_WINDOWS),
         )
         .where(
             (FareQuoteRow.fare_class.is_(None))

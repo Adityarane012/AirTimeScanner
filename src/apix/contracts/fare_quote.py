@@ -18,7 +18,14 @@ from pandera.typing import Series
 from pydantic import BaseModel, Field, model_validator
 
 ObservationStatus = Literal["observed", "no_service", "collection_failed", "imputed"]
-AdvancePurchaseDays = Literal[1, 7, 15, 30]
+
+# Was Literal[1, 7, 15, 30]: the windows the methodology specifies (docs/02
+# s1), which a Tier-1 source is asked for directly. A Tier-3 offer page
+# serves a departure date of its own choosing, so the lead time is recorded
+# as measured rather than rounded to fit a window nobody asked for. The
+# headline index still aggregates only apix.index.config.
+# ADVANCE_PURCHASE_WINDOWS -- enforced in apix.index.engine.load_observations.
+AdvancePurchaseDays = int
 
 
 class FareQuote(BaseModel):
@@ -32,7 +39,7 @@ class FareQuote(BaseModel):
     destination: str = Field(min_length=3, max_length=3)
     departure_date: date
     collection_ts: datetime
-    advance_purchase_days: AdvancePurchaseDays
+    advance_purchase_days: AdvancePurchaseDays = Field(ge=0, le=365)
     fare_class: str | None = None
     is_nonstop: bool = True
 
@@ -72,7 +79,7 @@ class FareQuoteBatchSchema(pa.DataFrameModel):
     destination: Series[str] = pa.Field(str_length={"min_value": 3, "max_value": 3})
     departure_date: Series[pa.typing.pandas.DateTime]
     collection_ts: Series[pa.typing.pandas.DateTime]
-    advance_purchase_days: Series[int] = pa.Field(isin=[1, 7, 15, 30])
+    advance_purchase_days: Series[int] = pa.Field(ge=0, le=365)
     total_fare: Series[float] = pa.Field(ge=0, nullable=True)
     observation_status: Series[str] = pa.Field(
         isin=["observed", "no_service", "collection_failed", "imputed"]

@@ -404,3 +404,45 @@ def test_everything_suppressed_is_explained_not_silent():
     assert rows == [], "2 of 5 carriers is below the 60% floor"
     assert any("coverage floor" in w for w in report.warnings)
     assert any("not a computation failure" in w for w in report.warnings)
+
+# --- the headline's second gate: advance-purchase window ---------------------
+#
+# Added with the first Tier-3 offer source (2026-09-23). Those rows carry a
+# lead time Goibibo chose -- T+8 to T+88, differing per route on the same day
+# -- so they are real observations of a different product. The fare_class
+# filter above is not enough on its own: an offer source tagged distinctly and
+# then forgotten in TIER1_FILED_FARE_CLASSES would flow straight into the
+# headline. This gate does not depend on remembering anything.
+
+
+def test_the_headline_query_admits_only_methodology_windows():
+    from sqlalchemy.dialects import postgresql
+
+    from apix.index.config import ADVANCE_PURCHASE_WINDOWS
+    from apix.index.engine import load_observations
+
+    class _CapturingSession:
+        def __init__(self):
+            self.stmt = None
+
+        def execute(self, stmt):
+            self.stmt = stmt
+            return []
+
+    session = _CapturingSession()
+    load_observations(session, date(2026, 9, 1), date(2026, 10, 1))
+    sql = str(session.stmt.compile(
+        dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+    ))
+
+    assert "advance_purchase_days IN (1, 7, 15, 30)" in sql.replace("\n", " ")
+    assert tuple(ADVANCE_PURCHASE_WINDOWS) == (1, 7, 15, 30)
+
+
+def test_an_uncontrolled_lead_offer_is_not_an_index_window():
+    """T+10 and T+88 were both observed on the first sweep; neither is a
+    window the headline aggregates."""
+    from apix.index.config import ADVANCE_PURCHASE_WINDOWS
+
+    assert 10 not in ADVANCE_PURCHASE_WINDOWS
+    assert 88 not in ADVANCE_PURCHASE_WINDOWS
