@@ -287,3 +287,79 @@ survived until the adapter forced them:
 UNVERIFIED, not allowed), SpiceJet's tariff URL (host open, no sheet located),
 and the Air India Express `/content/dam` conflict (blocked, deliberately not
 routed around).
+
+---
+
+## Tier-3 offer sweep — 2026-09-23
+
+Nine days of Tier-1 collection (09-09 to 09-23) produced **zero price
+movement**: the Air India sheet is byte-identical every day, so the filed
+tariff cannot produce an index. This sweep asked the question that decides the
+project: *is any offer source collectible under this project's compliance
+posture?*
+
+Every verdict below comes from `scripts/check_robots.py` — the production
+`RobotsGate`, evaluating the actual URL for our own agent token.
+
+| Surface | Path checked | Verdict |
+|---|---|---|
+| **Goibibo route page** | `/flights/delhi-to-mumbai-flights/` | ✅ **ALLOWED** — and it works. See below |
+| Goibibo search | `/flights/air-DEL-BOM-…` | ❌ BLOCKED — `Disallow: /flights/air-*` |
+| Goibibo, any query string | `/flights/…?…` | ❌ BLOCKED — `Disallow: /flights/*?*` |
+| MakeMyTrip route page | `/flights/delhi-mumbai-cheap-airtickets.html` | ✅ ALLOWED, but the fares in the HTML are marketing copy ("from ₹149"), not a listing |
+| MakeMyTrip search | `/flight/search*` | ❌ BLOCKED |
+| Ixigo route page | `/flights/delhi-to-mumbai` | ✅ ALLOWED by robots; **404** in practice |
+| Ixigo search | `/search/result/flight` | ❌ BLOCKED — `Disallow: /search/result/` |
+| Yatra | `/flights/delhi-to-mumbai` | ✅ ALLOWED by robots; **404** in practice |
+| **EaseMyTrip** | `/flight-search/listing` | ⚠️ **ALLOWED — this log was wrong, see correction** |
+| Air India booking | `/in/en/book/flight-search.html` | ✅ ALLOWED by robots; 404 in practice |
+| IndiGo booking | `/booking/*` | ❌ BLOCKED |
+| Akasa booking | `/booking/flight-select` | ✅ ALLOWED by robots (not probed further) |
+| SpiceJet booking | `book.spicejet.com/search.aspx` | ✅ ALLOWED, 200, but no listing in the HTML |
+
+### Correction: EaseMyTrip is no longer disallowed
+
+This log recorded `Disallow: /cheap_flights/`, `/cheap-flights/` and
+`/flight-search/listing*` for EaseMyTrip. **Its robots.txt today is two
+lines:**
+
+```
+User-Agent: *
+Allow: *
+```
+
+The rules are gone. The recorded verdict was not wrong when written — the file
+changed under it. That is the argument for `check_robots.py` being a scheduled
+check rather than a one-off: **a robots verdict is a fact with a timestamp, not
+a property of a host.** EaseMyTrip is nonetheless unusable for now: the listing
+page is JavaScript-rendered and its HTML carries a CAPTCHA marker, so it is
+blocked by *technique*, not by permission, and docs/01 rules out defeating
+that.
+
+### What Goibibo's route page actually serves
+
+Fetched once per route with the identified agent, HTTP 200, ~1.9 MB:
+
+- A complete listing server-rendered into a `__NEXT_DATA__` blob — **no
+  JavaScript execution, no session, no search POST.** Twenty journeys on
+  DEL→HYD, with flight numbers, carriers, stop counts, durations, a total fare
+  and a base-fare breakup.
+- **The departure date is Goibibo's choice.** With query strings disallowed,
+  the date cannot be requested. Measured across the ten basket routes on
+  2026-09-23, served dates ranged from **T+8 to T+88, differing per route on
+  the same day**.
+- **City search, not airport search.** A DEL page also serves DXN (Noida) and
+  HDO (Hindon) journeys; a BOM page serves NMI (Navi Mumbai). The basket is
+  keyed on airport pairs, so those are skipped rather than relabelled.
+- **The cheapest journey is often a connection** — ₹7,857 via Nagpur against
+  ₹8,933 non-stop on DEL→HYD. docs/02 §1 specifies non-stop.
+
+Built as `apix.acquisition.tier3_goibibo` the same day. First live run: 9 of
+10 routes, five carriers, offers at **1.6× to 3.6× the filed tariff** for the
+same route on the same day — the clearest evidence yet that a filed tariff
+band is not a price anyone pays.
+
+**The ToS question is open and was taken deliberately.** robots.txt permits
+these paths; Goibibo's terms have not been read. The operator's decision
+(2026-09-23) is to treat robots.txt as the gate, consistent with Tier 1. If
+that is ever revisited, this adapter is the thing to revisit.
