@@ -231,10 +231,14 @@ python scripts/check_robots.py              # re-verify robots verdicts
 
 ## 7. What to do next
 
-1. **Move collection off this laptop.** GitHub Actions on a cron would end the
-   two remaining failure modes at once — the machine being off (which lost
-   09-18 and 09-19) and the campus network blocking Postgres ports. The sources
-   are public URLs and Supabase is reachable from anywhere.
+1. **Finish moving collection off this laptop.** `.github/workflows/collect.yml`
+   is written and committed; it needs the `DATABASE_URL` repository secret set
+   in the GitHub UI and one manual run to prove it. This ends the two remaining
+   failure modes: the machine being off (which lost 09-18 and 09-19) and the
+   campus network blocking Postgres ports. Keep the local Task Scheduler job
+   enabled alongside it — whichever runs first collects, the other skips.
+   **Unproven until it has run:** GitHub's runners are datacenter IPs, and
+   Air India or Goibibo may treat them differently from a home connection.
 2. **The real DGCA route basket** (§2). Unblocked, needs no carrier access.
 3. **Probe Akasa's booking path** — robots-allowed, never fetched. The cheapest
    remaining lead on a date-controllable offer source.
