@@ -15,6 +15,12 @@ scheduler does not have to bet on a single slot — which matters on a laptop
 that is shut down every night and was never once awake at 06:00. A launch with
 nothing due makes one small query per source and no network requests.
 
+**The database being unreachable does not stop collection.** Every result is
+written to a local spool (`apix.ops.spool`) before the database is touched,
+and uploaded by the next run that can reach it. While offline, the "already
+collected today" decision is made from the spool instead. See that module for
+the 2026-09-15 incident that made this necessary.
+
 Adapter isolation is enforced here: one adapter's exception can never stop
 the others (SourceAdapter.run() already catches internally; this loop is a
 second belt-and-braces layer).
@@ -39,12 +45,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import OperationalError
 
 from apix.db.engine import get_session
 from apix.db.models import CollectionRun, FareQuoteRow, Route
 from apix.ops.collection_health import DONE_STATUSES, decide, run_alert, utc_day_bounds
 from apix.ops.notify import notify
 from apix.ops.sources import scheduled_sources
+from apix.ops.spool import Spool, SpooledRun, overdue_upload_alert
+from apix.settings import settings
 
 
 def _last_success_before(session, source: str, today: date) -> date | None:
@@ -130,6 +139,68 @@ def _persist_quotes(session, quotes, run_id) -> tuple[int, int]:
     return written, duplicates
 
 
+def _persist_run(session, run: SpooledRun) -> tuple[int, int]:
+    """Write one spooled run and its quotes. Idempotent: re-uploading a run
+    that already landed (crash after commit, before mark_sent) writes nothing.
+    """
+    session.execute(
+        pg_insert(CollectionRun)
+        .values(
+            run_id=run.run_id,
+            source=run.source,
+            started_at=run.started_at,
+            finished_at=run.finished_at,
+            status=run.status,
+            # docs/01's "robots.txt re-checked on every run" is only
+            # auditable if the check timestamp is actually persisted.
+            robots_checked_at=run.robots_checked_at,
+            config_hash=run.config_hash,
+            selector_relocated=run.selector_relocated,
+            notes=run.notes,
+        )
+        .on_conflict_do_nothing(index_elements=[CollectionRun.run_id])
+    )
+    return _persist_quotes(session, run.quotes, run.run_id)
+
+
+def _upload(spool: Spool, path: Path, run: SpooledRun) -> tuple[int, int]:
+    """Upload one pending run and mark it sent. Raises OperationalError if the
+    database is unreachable, leaving the run pending."""
+    with get_session() as session:
+        counts = _persist_run(session, run)
+        session.commit()
+    spool.mark_sent(path)
+    return counts
+
+
+def _flush(spool: Spool) -> bool:
+    """Upload every pending run, oldest first. Returns whether the database
+    was reachable; stops at the first connection failure."""
+    for path, run in spool.pending():
+        try:
+            written, duplicates = _upload(spool, path, run)
+        except OperationalError as exc:
+            print(f"database unreachable: {_first_line(exc)}")
+            return False
+        print(
+            f"uploaded {run.source} run from {run.started_at:%Y-%m-%d %H:%M} UTC "
+            f"({written} written, {duplicates} duplicate)"
+        )
+    return True
+
+
+def _first_line(exc: BaseException) -> str:
+    text = str(getattr(exc, "orig", None) or exc).strip()
+    return text.splitlines()[0] if text else type(exc).__name__
+
+
+def _alert(message: str) -> None:
+    # Logged first and unconditionally: the toast is best effort.
+    print(f"  ALERT: {message}")
+    shown = notify("APIx collection", message)
+    print(f"  (desktop notification {'shown' if shown else 'NOT shown'})")
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument(
@@ -145,13 +216,34 @@ def main(argv: list[str] | None = None) -> None:
     today = datetime.now(UTC).date()
     print(f"--- collection run {datetime.now(UTC):%Y-%m-%d %H:%M:%S} UTC ---")
 
+    spool = Spool(settings.spool_path)
+    spool.prune_sent(today)
+    online = _flush(spool)
+    if not online:
+        print("  results will be saved to the local spool and uploaded later")
+        alert = overdue_upload_alert([run for _, run in spool.pending()], today)
+        if alert and spool.first_alert_today(today):
+            _alert(alert)
+
     # Adapter isolation: one source's failure cannot stop the others, since
     # SourceAdapter.run() catches internally and the loop carries on.
     for scheduled in scheduled_sources():
         adapter = scheduled.adapter
-        with get_session() as session:
-            statuses_today = _statuses_today(session, adapter.name, today)
-            previous_success = _last_success_before(session, adapter.name, today)
+        statuses_today: list[str] = []
+        previous_success: date | None = None
+        if online:
+            try:
+                with get_session() as session:
+                    statuses_today = _statuses_today(session, adapter.name, today)
+                    previous_success = _last_success_before(session, adapter.name, today)
+            except OperationalError as exc:
+                print(f"database unreachable: {_first_line(exc)}")
+                online = False
+        if not online:
+            # The spool holds every run this machine made today, uploaded or
+            # not. previous_success stays unknown, so there is no gap alert
+            # offline; a lost day still shows in check_collection.py.
+            statuses_today = spool.statuses_on(adapter.name, today)
 
         if not args.force:
             decision = decide(statuses_today, scheduled.max_attempts_per_day)
@@ -162,32 +254,33 @@ def main(argv: list[str] | None = None) -> None:
 
         started_at = datetime.now(UTC)
         result = adapter.run()
-        run_id = uuid.uuid4()
+        run = SpooledRun(
+            run_id=uuid.uuid4(),
+            source=result.source,
+            started_at=started_at,
+            finished_at=datetime.now(UTC),
+            status=result.status,
+            config_hash=result.config_hash,
+            robots_checked_at=result.robots_checked_at,
+            selector_relocated=result.selector_relocated,
+            notes=result.notes,
+            quotes=result.quotes,
+        )
+        # Write-ahead: the observation is on disk before any database attempt.
+        path = spool.write(run)
 
-        with get_session() as session:
-            session.add(
-                CollectionRun(
-                    run_id=run_id,
-                    source=result.source,
-                    started_at=started_at,
-                    finished_at=datetime.now(UTC),
-                    status=result.status,
-                    # docs/01's "robots.txt re-checked on every run" is only
-                    # auditable if the check timestamp is actually persisted.
-                    # The column existed from day one and nothing wrote it.
-                    robots_checked_at=result.robots_checked_at,
-                    config_hash=result.config_hash,
-                    selector_relocated=result.selector_relocated,
-                    notes=result.notes,
-                )
-            )
-            session.flush()  # run row must exist before fare_quote FKs reference it
-            written, duplicates = _persist_quotes(session, result.quotes, run_id)
-            session.commit()
-
-        summary = f"{len(result.quotes)} quotes parsed, {written} written"
-        if duplicates:
-            summary += f", {duplicates} duplicate"
+        summary = f"{len(result.quotes)} quotes parsed"
+        if online:
+            try:
+                written, duplicates = _upload(spool, path, run)
+                summary += f", {written} written"
+                if duplicates:
+                    summary += f", {duplicates} duplicate"
+            except OperationalError as exc:
+                print(f"database unreachable: {_first_line(exc)}")
+                online = False
+        if not online:
+            summary += ", saved locally, upload pending"
         print(f"{result.source}: {result.status} ({summary})")
 
         if not scheduled.tripwire:
@@ -201,10 +294,7 @@ def main(argv: list[str] | None = None) -> None:
                 notes=result.notes,
             )
             if alert:
-                # Logged first and unconditionally: the toast is best effort.
-                print(f"  ALERT: {alert}")
-                shown = notify("APIx collection", alert)
-                print(f"  (desktop notification {'shown' if shown else 'NOT shown'})")
+                _alert(alert)
         for warning in result.warnings:
             print(f"  WARNING: {warning}")
 

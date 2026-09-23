@@ -10,6 +10,7 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://apix_app:CHANGE_ME@localhost:5432/apix"
     raw_store_path: Path = Path("./data/raw")
+    spool_path: Path = Path("./data/spool")
     apix_user_agent: str = "APIx-Collector/0.1 (+mailto:unset@example.com)"
     apix_contact_email: str = "unset@example.com"
     app_env: str = "dev"
