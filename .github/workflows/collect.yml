@@ -19,7 +19,9 @@
 #   Use the SESSION POOLER host (aws-0-...pooler.supabase.com), never
 #   db.<ref>.supabase.co: GitHub's runners are IPv4-only and that host
 #   publishes an AAAA record only. This is the same failure that cost nine
-#   runs on 2026-09-15.
+#   runs on 2026-09-15. Supabase's dashboard offers the direct string first,
+#   so this is an easy one to get wrong; the preflight step below names the
+#   host it actually tried, which is how you tell the two apart.
 #
 # This repo is public. Secrets are encrypted and are not exposed to workflow
 # runs from forks; never echo $DATABASE_URL in a step.
@@ -63,6 +65,18 @@ jobs:
 
       - name: Install
         run: pip install -e .
+
+      # Before fetching anything: a runner that cannot reach the database has
+      # nowhere to put what it collects. The spool cannot save it the way it
+      # saves a laptop, because the container is deleted at the end of the job.
+      # Both scheduled runs on 2026-09-23 fetched ten OTA pages and then threw
+      # them away; this step is why that cannot happen again. The failure is
+      # emitted as an annotation naming the host, so it is diagnosable from the
+      # run list without opening the log.
+      - name: Check the database is reachable
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python scripts/preflight_db.py
 
       - name: Collect
         env:
