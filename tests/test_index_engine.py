@@ -446,3 +446,32 @@ def test_an_uncontrolled_lead_offer_is_not_an_index_window():
 
     assert 10 not in ADVANCE_PURCHASE_WINDOWS
     assert 88 not in ADVANCE_PURCHASE_WINDOWS
+
+
+def test_an_offer_on_a_methodology_window_is_still_excluded():
+    """Found in production on 2026-09-24. Goibibo picks its own departure
+    date, and sometimes picks one that lands exactly on T+7 or T+30. Four such
+    rows passed the window gate and reached the headline. The window gate
+    cannot express "different product"; the tag has to."""
+    from sqlalchemy.dialects import postgresql
+
+    from apix.index.engine import (
+        NON_HEADLINE_FARE_CLASSES,
+        TIER1_FILED_FARE_CLASSES,
+        load_observations,
+    )
+
+    assert "tier3_offer_uncontrolled_lead" in NON_HEADLINE_FARE_CLASSES
+    assert TIER1_FILED_FARE_CLASSES < NON_HEADLINE_FARE_CLASSES  # strict superset
+
+    class _CapturingSession:
+        def execute(self, stmt):
+            self.stmt = stmt
+            return []
+
+    session = _CapturingSession()
+    load_observations(session, date(2026, 9, 1), date(2026, 10, 1))
+    sql = str(session.stmt.compile(
+        dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+    ))
+    assert "tier3_offer_uncontrolled_lead" in sql

@@ -18,9 +18,10 @@ Pipeline, in order:
 Two filters at the input decide whether the output is a statistic or a
 plausible-looking number, and both are easy to omit by accident:
 
-1. **Filed-tariff rows are excluded from the headline**, by `fare_class` —
-   see `TIER1_FILED_FARE_CLASSES`. IMPLEMENTATION.md §5a flagged this three
-   phases in advance. Those rows are filed tariff *bands* — not tied to a
+1. **Filed-tariff rows and uncontrolled-lead offers are excluded from the
+   headline**, by `fare_class` — see `NON_HEADLINE_FARE_CLASSES`.
+   IMPLEMENTATION.md §5a flagged the filed-tariff half three phases in
+   advance. Those rows are filed tariff *bands* — not tied to a
    departure date, and a floor rather than an available offer. They are
    structural anchors, not index inputs. Including them would silently
    contaminate the headline with a different economic object.
@@ -30,6 +31,13 @@ plausible-looking number, and both are easy to omit by accident:
    to keep its fare decomposition distinguishable) and then forgotten here
    does not fail loudly — it quietly starts feeding filed bands into the
    headline, which is the exact contamination this filter exists to stop.
+   The second half was found the hard way on 2026-09-24. Tier-3 offers carry
+   a departure date the *source* picks, so their lead time is not a
+   methodology window — except when it accidentally is. Goibibo served T+30
+   and T+7 that day, and those rows passed the advance-purchase-window filter
+   and landed in the headline, which the operator had explicitly decided they
+   must never do. A window gate cannot express "this is a different product";
+   only the tag can.
 2. **Rows carrying an `exclusion_reason` are excluded.** docs/02 §7 requires
    excluded observations to be retained and auditable, not deleted — so they
    are still in the table, and the engine must actively filter them out.
@@ -55,6 +63,18 @@ TIER1_FILED_FARE_CLASSES = frozenset({
     "tier1_tariff_floor",     # tier1_indigo: filed floor, total fare only
     "tier1_filed_base_fare",  # tier1_air_india: filed base fare + decomposition
 })
+
+# Offers whose departure date the source chose rather than us. Excluded by tag
+# and not only by window, because a source that picks its own date sometimes
+# picks one that happens to be a methodology window: on 2026-09-24 Goibibo
+# served T+30 for DEL-HYD and T+7 for two more routes, and those four rows
+# were reaching the headline through the window gate alone. Tag and window are
+# independent conditions and neither is sufficient by itself.
+UNCONTROLLED_LEAD_FARE_CLASSES = frozenset({
+    "tier3_offer_uncontrolled_lead",  # tier3_goibibo: date served by the page
+})
+
+NON_HEADLINE_FARE_CLASSES = TIER1_FILED_FARE_CLASSES | UNCONTROLLED_LEAD_FARE_CLASSES
 
 SERIES_HEADLINE = "apix.headline"
 SERIES_HEADLINE_RAW = "apix.headline.raw"
@@ -110,7 +130,7 @@ def load_observations(session, period_start: date, period_end: date) -> list[Obs
         )
         .where(
             (FareQuoteRow.fare_class.is_(None))
-            | (FareQuoteRow.fare_class.notin_(sorted(TIER1_FILED_FARE_CLASSES)))
+            | (FareQuoteRow.fare_class.notin_(sorted(NON_HEADLINE_FARE_CLASSES)))
         )
     )
     return [
