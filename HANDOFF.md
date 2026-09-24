@@ -191,6 +191,14 @@ Mumbai). Those are skipped, not relabelled. On a normal day most of a page is
 other airports and connections, so that skip is silent — only a route that
 yields *nothing* raises a warning.
 
+### A Tier-3 day is not always one row per route
+The daily-observation unique index keys on the *served departure date*, and
+Goibibo moves it. Two runs in one day (a `--force` run, say) can therefore
+write two rows for the same route: on 09-24 DEL→BLR came back as T+7 in the
+morning and T+8 in the afternoon, both at ₹8,828. That is honest — they are
+two different products — but it means the offer series does not have a fixed
+row count per day the way the Tier-1 series does.
+
 ### The collector must never need the database to collect
 `apix.ops.spool` is the rule made structural. A day not *fetched* is gone; a day
 not *uploaded* is merely waiting.
@@ -231,14 +239,22 @@ python scripts/check_robots.py              # re-verify robots verdicts
 
 ## 7. What to do next
 
-1. **Finish moving collection off this laptop.** `.github/workflows/collect.yml`
-   is written and committed; it needs the `DATABASE_URL` repository secret set
-   in the GitHub UI and one manual run to prove it. This ends the two remaining
-   failure modes: the machine being off (which lost 09-18 and 09-19) and the
-   campus network blocking Postgres ports. Keep the local Task Scheduler job
-   enabled alongside it — whichever runs first collects, the other skips.
-   **Unproven until it has run:** GitHub's runners are datacenter IPs, and
-   Air India or Goibibo may treat them differently from a home connection.
+1. ~~Move collection off this laptop.~~ **Done and proven on 2026-09-24.**
+   `.github/workflows/collect.yml` collected from a GitHub runner at 13:05 UTC:
+   Air India succeeded, Goibibo succeeded on all ten routes, and the rows are
+   in the database. Two things that were genuinely unknown are now answered —
+   **the datacenter IP is not a problem** (Air India is Akamai-fronted and
+   served the runner fine), and the runner reaches Supabase through the pooler.
+   The local Task Scheduler job stays enabled alongside it; whichever runs
+   first collects and the other skips.
+
+   The three scheduled runs before that failed, all the same way: the runner
+   collected, could not write, and the job refused to let the container delete
+   the spooled files. Fixed by re-setting the `DATABASE_URL` secret and by the
+   preflight in `scripts/preflight_db.py`, which now stops a run *before* it
+   fetches anything it cannot store. GitHub's cron is heavily delayed in
+   practice — observed 5h18m and 4h01m late — so do not read a missing
+   08:00 IST run as a failure until much later in the day.
 2. **The real DGCA route basket** (§2). Unblocked, needs no carrier access.
 3. **Probe Akasa's booking path** — robots-allowed, never fetched. The cheapest
    remaining lead on a date-controllable offer source.
