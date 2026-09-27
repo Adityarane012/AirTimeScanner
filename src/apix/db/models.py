@@ -41,6 +41,15 @@ class Route(Base):
     stage_length_km: Mapped[float | None] = mapped_column(Numeric(6, 1))
     stratum_class: Mapped[str] = mapped_column(Text, nullable=False)
     dgca_pax_weight: Mapped[float | None] = mapped_column(Numeric(10, 6))
+    # Provenance for that weight (sql/0004). A weight without these is refused
+    # by a CHECK constraint: a number nobody can trace is not defensible, and
+    # passenger share and expenditure share are different statistics that must
+    # never be silently interchanged.
+    weight_basis: Mapped[str | None] = mapped_column(Text)
+    weight_source: Mapped[str | None] = mapped_column(Text)
+    weight_period_start: Mapped[date | None] = mapped_column(Date)
+    weight_period_end: Mapped[date | None] = mapped_column(Date)
+    weight_retrieved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 

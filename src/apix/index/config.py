@@ -61,6 +61,14 @@ class MethodologyConfig:
     elementary_formula: str = "jevons"
     upper_formula: str = "lowe_young"
     base_period_rule: str = "first_collection_day_of_month"
+    # What the upper-level route weights are and where they came from, e.g.
+    # "dgca_passenger_share:2025-08..2026-07". Set by the engine from the
+    # `route` table's provenance columns (sql/0004), not from a config file,
+    # because the weights live in the database. It is in the hash because
+    # moving from equal weighting to a traffic-weighted basket changes what
+    # every published number means — exactly the kind of change docs/02 §9
+    # exists to make visible rather than silent.
+    route_weight_source: str = "equal_fallback"
 
     # Populated by load(); excluded from the hash (see canonical_params).
     source_files: tuple[str, ...] = field(default=(), compare=False)
@@ -90,6 +98,7 @@ class MethodologyConfig:
             "elementary_formula": self.elementary_formula,
             "upper_formula": self.upper_formula,
             "base_period_rule": self.base_period_rule,
+            "route_weight_source": self.route_weight_source,
         }
 
     @property

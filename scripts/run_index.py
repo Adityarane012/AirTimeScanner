@@ -16,6 +16,7 @@ methodology change before it produces a published vintage.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -50,10 +51,19 @@ def main() -> int:
     start, end = _month_bounds(args.month)
     cfg = index_config.load()
     print(f"APIx index — period {start} to {end} (exclusive)")
-    print(f"  config_hash : {cfg.config_hash}")
-    print(f"  booking curve: {cfg.booking_curve_version} {cfg.booking_curve}")
 
     with get_session() as session:
+        # The weights live in the database, so the methodology hash cannot be
+        # known until they are read: an equal-weighted run and a
+        # traffic-weighted one are different methodologies and must not share
+        # a config_hash. See sql/0004 and index/config.route_weight_source.
+        cfg = dataclasses.replace(
+            cfg, route_weight_source=engine.load_weight_provenance(session)
+        )
+        print(f"  config_hash : {cfg.config_hash}")
+        print(f"  booking curve: {cfg.booking_curve_version} {cfg.booking_curve}")
+        print(f"  route weights: {cfg.route_weight_source}")
+
         observations = engine.load_observations(session, start, end)
         route_weights = engine.load_route_weights(session)
         panel, index_rows, report = engine.compute(

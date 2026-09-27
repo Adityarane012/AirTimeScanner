@@ -48,7 +48,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from apix.db.models import FareQuoteRow, IndexValue, Route, StratumPanel
@@ -145,11 +145,49 @@ def load_observations(session, period_start: date, period_end: date) -> list[Obs
     ]
 
 
+# A partially weighted basket is worse than an unweighted one: the routes with
+# weights dominate and the rest are pulled to whatever the fallback gives them,
+# without anything in the output saying so. Below this share of active routes
+# the weights are refused outright and the run stays equal-weighted.
+MIN_WEIGHT_COVERAGE = 0.9
+
+
 def load_route_weights(session) -> dict[int, float | None]:
     rows = session.execute(
         select(Route.route_id, Route.dgca_pax_weight).where(Route.active.is_(True))
     ).all()
     return {rid: (float(w) if w is not None else None) for rid, w in rows}
+
+
+def weight_coverage(route_weights: dict[int, float | None]) -> float:
+    """Share of active routes carrying a weight."""
+    if not route_weights:
+        return 0.0
+    return sum(1 for w in route_weights.values() if w is not None) / len(route_weights)
+
+
+def load_weight_provenance(session) -> str:
+    """A label identifying the weights in force, for the methodology hash.
+
+    Returns "equal_fallback" when no active route carries a weight, so the
+    hash distinguishes an unweighted run from a weighted one without any
+    caller having to remember to pass something.
+    """
+    row = session.execute(
+        select(
+            Route.weight_basis,
+            Route.weight_source,
+            func.min(Route.weight_period_start),
+            func.max(Route.weight_period_end),
+        )
+        .where(Route.active.is_(True), Route.dgca_pax_weight.is_not(None))
+        .group_by(Route.weight_basis, Route.weight_source)
+        .order_by(Route.weight_source)
+    ).first()
+    if row is None or row[0] is None:
+        return "equal_fallback"
+    basis, source, start, end = row
+    return f"{basis}:{source}:{start:%Y-%m}..{end:%Y-%m}"
 
 
 def compute(
@@ -177,6 +215,16 @@ def compute(
             "EQUAL weight. This is not the Lowe/Young revenue-share aggregation docs/02 §8 "
             "specifies; the composite is provisional until the real DGCA basket lands."
         )
+    elif weight_coverage(route_weights) < MIN_WEIGHT_COVERAGE:
+        covered = weight_coverage(route_weights)
+        report.warnings.append(
+            f"route weights cover only {covered:.0%} of active routes, below the "
+            f"{MIN_WEIGHT_COVERAGE:.0%} floor — weights REFUSED and the run falls back to "
+            "EQUAL weight. A partly weighted basket silently over-weights whichever "
+            "routes happen to have data."
+        )
+        route_weights = dict.fromkeys(route_weights)
+        report.route_weights_are_real = False
 
     if not observations:
         report.warnings.append("no index-eligible quotes in the period — nothing computed")
