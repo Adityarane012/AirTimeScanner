@@ -56,9 +56,9 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -111,7 +111,7 @@ jobs:
 
       - name: Save un-uploaded observations
         if: always() && steps.spool.outputs.pending == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: spool-pending-${{ github.run_id }}
           path: data/spool/pending
