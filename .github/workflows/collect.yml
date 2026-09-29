@@ -31,12 +31,19 @@ name: collect
 on:
   schedule:
     # Three attempts a day, in UTC. GitHub's scheduler is best-effort and can
-    # be delayed by many minutes under load, so this does not rely on any one
-    # of them firing: a source already collected today costs one small query
-    # and no network request.
-    - cron: "30 2 * * *"   # 08:00 IST
-    - cron: "30 8 * * *"   # 14:00 IST
-    - cron: "30 14 * * *"  # 20:00 IST
+    # be delayed under load, so this does not rely on any one of them firing:
+    # a source already collected today costs one small query and no network
+    # request.
+    #
+    # The minute is deliberately not :00 or :30. Those are the two minutes the
+    # whole platform schedules on, and a job queued into that crowd waits. On
+    # 2026-09-29 the 02:30 run had still not started by 05:50 UTC, more than
+    # three hours late, which is well past "a few minutes". An odd minute is
+    # not a guarantee -- the scheduler offers no upper bound at any time -- but
+    # it queues behind far fewer jobs, and it costs nothing to ask for one.
+    - cron: "43 2 * * *"   # 08:13 IST
+    - cron: "43 8 * * *"   # 14:13 IST
+    - cron: "43 14 * * *"  # 20:13 IST
   workflow_dispatch:
     inputs:
       force:
